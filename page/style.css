@@ -37,11 +37,18 @@
   padding: 0;
 }
 
-html,
+html {
+  min-height: 100%;
+  width: 100%;
+  background: var(--bg);
+  color-scheme: light dark;
+}
+
 body {
   min-height: 100%;
+  width: 100%;
   font-family: var(--magpie-font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif);
-  background: transparent;
+  background: var(--bg);
   color: var(--text);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;

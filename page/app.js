@@ -339,6 +339,7 @@
     const email = actionBtn.getAttribute("data-email");
 
     if (action === "switch-all" && email) {
+      showIneligibleTemp = false;
       sendPluginCommand({
         type: "switch",
         email,
@@ -347,6 +348,7 @@
         syncMagpie: true
       });
     } else if (action === "switch-cli" && email) {
+      showIneligibleTemp = false;
       sendPluginCommand({
         type: "switch",
         email,

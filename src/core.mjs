@@ -201,7 +201,7 @@ function readVault() {
     reloadHistory: [],
     lastSwitch: null,
     preferences: {
-      onlyPro: false,
+      onlyPro: true,
       hideIneligible: true
     },
     accounts: {}
