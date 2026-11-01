@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Antigravity 切号</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="_magpie/bridge.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="title-block">
+          <h1>Antigravity 账号切换</h1>
+          <p class="subtitle" id="subtitleText">桌面端 · CLI · Magpie 网关三端同步与实时配额</p>
+        </div>
+        <div class="toolbar">
+          <button type="button" class="btn btn-filter" id="btnTogglePro" title="一键隐藏或显示非 Pro 会员账号">
+            隐藏非会员
+          </button>
+          <button type="button" class="btn" id="btnOrganize" title="自动纳管本地 Pro 账号、停用异常账号并置顶会员">
+            整理账号
+          </button>
+          <button type="button" class="btn btn-ghost" id="btnRefresh" title="刷新最新状态">
+            刷新
+          </button>
+        </div>
+      </header>
+
+      <div class="toast hidden" id="toastBanner"></div>
+
+      <section class="status-strip" id="statusStrip">
+        <div class="status-cell">
+          <span class="status-label">桌面端</span>
+          <span class="status-email" id="curDesktopEmail">-</span>
+          <span class="status-dot" id="curDesktopDot"></span>
+        </div>
+        <div class="status-divider"></div>
+        <div class="status-cell">
+          <span class="status-label">CLI (agy)</span>
+          <span class="status-email" id="curCliEmail">-</span>
+        </div>
+        <div class="status-divider"></div>
+        <div class="status-cell">
+          <span class="status-label">Magpie 首选</span>
+          <span class="status-email" id="curMagpieEmail">-</span>
+        </div>
+      </section>
+
+      <section class="list-section">
+        <div class="account-list" id="accountList">
+          <div class="account-empty-state">正在同步本地账号与配额…</div>
+        </div>
+        <div class="hidden-footer hidden" id="hiddenFooter"></div>
+      </section>
+    </main>
+
+    <script src="state.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
