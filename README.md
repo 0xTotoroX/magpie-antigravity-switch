@@ -19,6 +19,14 @@
 
 需要 macOS、Magpie 0.1.2670+，以及已登录的 Antigravity 桌面端或 `agy` CLI。
 
+从 npm 安装：
+
+```sh
+magpie plugin add npm:magpie-antigravity-switch@0.1.3
+```
+
+也可以从 GitHub 安装：
+
 ```sh
 magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.1.3
 ```
@@ -27,7 +35,14 @@ magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.1.3
 
 ## 终端用法
 
-在源码目录可通过 `node index.mjs` 使用 CLI；注册本地命令后可使用 `magpie-agy-switch`。独立 CLI 需要 Node.js 24+。
+独立 CLI 需要 Node.js 24+：
+
+```sh
+npm install --global magpie-antigravity-switch@0.1.3
+magpie-agy-switch status
+```
+
+在源码目录中也可以使用 `node index.mjs`：
 
 ```sh
 # 查看账号状态与配额
