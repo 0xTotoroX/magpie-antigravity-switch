@@ -1,5 +1,7 @@
 # magpie-antigravity-switch
 
+产品显示名为「Antigravity 切号」（英文 Antigravity Switch），包名为 `magpie-antigravity-switch`，命令名为 `magpie-agy-switch`。
+
 macOS 上的 Magpie 页面插件与 CLI，使用 JavaScript ES modules、Node.js/Bun 和原生 `security` 命令。
 
 ## 入口与目录

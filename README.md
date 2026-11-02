@@ -1,10 +1,12 @@
-# magpie-antigravity-switch
+# Antigravity 切号
 
 [![GitHub Topic](https://img.shields.io/badge/topic-magpie--plugin-blue)](https://github.com/topics/magpie-plugin)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](https://apple.com/macos)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 在 **Magpie** 侧边栏可视化切换 **Antigravity 桌面端 (`Antigravity.app`)**、**命令行 (`agy` CLI)** 与 **Magpie 网关** 的登录账号，并展示已查询到的订阅等级与模型配额池（Claude & GPT 5h/7d、Gemini 4 Argon 7d、Gemini 5h）。
+
+中文显示名称为 **Antigravity 切号**，英文名称为 **Antigravity Switch**；包名为 `magpie-antigravity-switch`，CLI 命令名为 `magpie-agy-switch`。
 
 ---
 
@@ -31,24 +33,19 @@
 
 ## 安装方法
 
-### 方式 1：通过 Magpie 图形界面安装
-1. 打开 `Magpie.app`，点击左侧菜单栏的「**插件**」。
-2. 在搜索框或添加输入框中输入：
-   ```text
-   github:your-username/magpie-antigravity-switch
-   ```
-3. 点击安装，完成后左侧边栏即刻出现「**Antigravity 切号**」页面。
+当前支持从本地源码目录安装。在插件源码目录执行：
 
-### 方式 2：通过 Magpie 终端命令安装
 ```bash
-magpie plugin add github:your-username/magpie-antigravity-switch
+magpie plugin add "$PWD"
 ```
+
+安装后在 Magpie 侧边栏打开「**Antigravity 切号**」。当前仓库尚未配置远端；GitHub 与 npm 发布地址确认后再补充对应安装方式。
 
 ---
 
 ## 终端 CLI 用法
 
-本插件同时内置了独立的命令行工具，支持在终端无界面快速调用：
+在源码目录可直接使用 `node index.mjs`。如需使用 `magpie-agy-switch` 命令，先在源码目录执行 `npm link` 注册本地命令；仅安装 Magpie 页面插件不代表终端命令已经注册。
 
 ```bash
 # 查看当前三端账号状态与配额
