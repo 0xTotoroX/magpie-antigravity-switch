@@ -1,4 +1,4 @@
-# Antigravity 切号
+# Antigravity Switch
 
 [![GitHub Topic](https://img.shields.io/badge/topic-magpie--plugin-blue)](https://github.com/topics/magpie-plugin)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](https://apple.com/macos)
@@ -6,7 +6,7 @@
 
 在 **Magpie** 侧边栏可视化切换 **Antigravity 桌面端 (`Antigravity.app`)**、**命令行 (`agy` CLI)** 与 **Magpie 网关** 的登录账号，并展示已查询到的订阅等级与模型配额池（Claude & GPT 5h/7d、Gemini 4 Argon 7d、Gemini 5h）。
 
-中文显示名称为 **Antigravity 切号**，英文名称为 **Antigravity Switch**；包名为 `magpie-antigravity-switch`，CLI 命令名为 `magpie-agy-switch`。
+显示名称统一为 **Antigravity Switch**；包名为 `magpie-antigravity-switch`，CLI 命令名为 `magpie-agy-switch`。
 
 ---
 
@@ -39,7 +39,7 @@
 magpie plugin add "$PWD"
 ```
 
-安装后在 Magpie 侧边栏打开「**Antigravity 切号**」。当前仓库尚未配置远端；GitHub 与 npm 发布地址确认后再补充对应安装方式。
+安装后在 Magpie 侧边栏打开「**Antigravity Switch**」。当前仓库尚未配置远端；GitHub 与 npm 发布地址确认后再补充对应安装方式。
 
 ---
 

@@ -41,8 +41,8 @@
     "page": {
       "title": "Antigravity Switch",
       "titles": {
-        "zh": "Antigravity 切号",
-        "zh-TW": "Antigravity 切號"
+        "zh": "Antigravity Switch",
+        "zh-TW": "Antigravity Switch"
       },
       "file": "page/index.html",
       "icon": "page/icon.svg",
