@@ -1,11 +1,12 @@
 # magpie-antigravity-switch
 
-产品显示名统一为「Antigravity Switch」，包名为 `magpie-antigravity-switch`，命令名为 `magpie-agy-switch`。
+产品显示名统一为「Antigravity Switch」，包名为 `magpie-antigravity-switch`，命令名为 `magpie-agy-switch`；社区仓库分发包名为 `@magpie-community/page-antigravity-switch`。
 
 macOS 上的 Magpie 页面插件与 CLI，使用 JavaScript ES modules、Node.js/Bun 和原生 `security` 命令。
 
 ## 入口与目录
 
+- `host.mjs`：Magpie v1 宿主入口，导入不启动服务；`server()` 才初始化状态与监听。
 - `index.mjs`：Magpie 默认插件函数和 `magpie-agy-switch` CLI；导入模块不会执行 CLI。
 - [src](src/AGENTS.md)：凭据、备份、账号状态、切换与后台监听。
 - [page](page/AGENTS.md)：Magpie 沙箱中的经典脚本页面。

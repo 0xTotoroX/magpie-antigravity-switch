@@ -6,7 +6,7 @@
 
 在 **Magpie** 侧边栏可视化切换 **Antigravity 桌面端 (`Antigravity.app`)**、**命令行 (`agy` CLI)** 与 **Magpie 网关** 的登录账号，并展示已查询到的订阅等级与模型配额池（Claude & GPT 5h/7d、Gemini 4 Argon 7d、Gemini 5h）。
 
-显示名称统一为 **Antigravity Switch**；包名为 `magpie-antigravity-switch`，CLI 命令名为 `magpie-agy-switch`。
+显示名称统一为 **Antigravity Switch**；包名为 `magpie-antigravity-switch`，CLI 命令名为 `magpie-agy-switch`。这是管理本机已有账号的页面插件，不提供模型转发或替代 Magpie 内置的 Antigravity 登录。
 
 ---
 
@@ -33,13 +33,19 @@
 
 ## 安装方法
 
-当前支持从本地源码目录安装。在插件源码目录执行：
+发布到 GitHub 后可安装指定版本：
+
+```bash
+magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.1.2
+```
+
+本地源码目录也可以安装：
 
 ```bash
 magpie plugin add "$PWD"
 ```
 
-安装后在 Magpie 侧边栏打开「**Antigravity Switch**」。当前仓库尚未配置远端；GitHub 与 npm 发布地址确认后再补充对应安装方式。
+安装后在 Magpie 侧边栏打开「**Antigravity Switch**」。提交社区目录的版本名为 `@magpie-community/page-antigravity-switch`；收录合并并完成官方分发后，可在「插件 → 发现」中安装。选择一种来源安装即可。
 
 ---
 
@@ -71,8 +77,8 @@ magpie-agy-switch pro-only on
 
 ## 系统要求
 
-- **操作系统**：macOS 12+ (Apple Silicon / Intel)
-- **环境依赖**：[Magpie](https://github.com/yetone/magpie) 0.1.2500+，[Antigravity](https://antigravity.google) 桌面端 / `agy` CLI
+- **操作系统**：macOS；真实验证环境为 Antigravity 2.28.2。其他系统不支持。
+- **环境依赖**：[Magpie](https://github.com/yetone/magpie) 0.1.2670+，[Antigravity](https://antigravity.google) 桌面端 / `agy` CLI
 
 ## 开发验证
 

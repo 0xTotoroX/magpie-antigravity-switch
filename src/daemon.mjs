@@ -1,6 +1,6 @@
 /**
  * [INPUT]: core.mjs、插件指令文件与本地文件变更。
- * [OUTPUT]: 后台监听器、去重后的指令执行及页面状态同步。
+ * [OUTPUT]: 两种分发包名的指令解析、后台监听器与页面状态同步。
  * [POS]: Magpie 插件的独立后台进程；按源码签名热重载。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   PATHS,
+  PLUGIN_DIR,
   PLUGIN_NAME,
   executeCommandPayload,
   syncStateFile
@@ -91,6 +92,25 @@ export function ensureBackgroundWatcher() {
   return { started: true, pid: child.pid };
 }
 
+// Both distribution names use the same existing vault and command format.
+export function readPendingCommand(raw) {
+  const names = [PLUGIN_NAME, "@magpie-community/page-antigravity-switch"];
+  const items = Array.isArray(raw?.plugins) ? raw.plugins : Array.isArray(raw?.items) ? raw.items : [];
+  for (const entry of items) {
+    const spec = typeof entry?.spec === "string" ? entry.spec : "";
+    const localPath = spec.startsWith("file:") ? spec.slice(5) : spec;
+    const fromThisDirectory = (path.isAbsolute(localPath) || localPath.startsWith(".")) && path.resolve(localPath) === PLUGIN_DIR;
+    if (!fromThisDirectory && !names.some((name) => entry?.name === name || spec.includes(name))) continue;
+    const cmd = entry?.options?.cmd || entry?.options?.pendingCommand;
+    if (cmd) return cmd;
+  }
+  for (const name of names) {
+    const cmd = raw?.[name]?.cmd || raw?.[name]?.pendingCommand;
+    if (cmd) return cmd;
+  }
+  return null;
+}
+
 export function startInProcessWatcher() {
   let lastCmdId = null;
   let debounceTimer = null;
@@ -99,17 +119,7 @@ export function startInProcessWatcher() {
     try {
       if (!fs.existsSync(PATHS.pluginsJson)) return;
       const raw = JSON.parse(fs.readFileSync(PATHS.pluginsJson, "utf8"));
-      const items = Array.isArray(raw?.plugins)
-        ? raw.plugins
-        : Array.isArray(raw?.items)
-          ? raw.items
-          : [];
-      const entry = items.find(
-        (it) =>
-          it?.name === PLUGIN_NAME ||
-          it?.spec?.includes?.(PLUGIN_NAME)
-      );
-      const cmd = entry?.options?.cmd || entry?.options?.pendingCommand || raw?.[PLUGIN_NAME]?.cmd || raw?.[PLUGIN_NAME]?.pendingCommand;
+      const cmd = readPendingCommand(raw);
       if (cmd && cmd.id && cmd.id !== lastCmdId) {
         lastCmdId = cmd.id;
         executeCommandPayload(cmd);

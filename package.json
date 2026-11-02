@@ -1,14 +1,15 @@
 {
   "name": "magpie-antigravity-switch",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "在 Magpie 内快速切换 Antigravity 桌面端与 CLI 登录账号，同步查看各账号实时配额与自动备份客户端凭证",
   "type": "module",
-  "main": "./index.mjs",
-  "exports": "./index.mjs",
+  "main": "./host.mjs",
+  "exports": "./host.mjs",
   "bin": {
     "magpie-agy-switch": "./index.mjs"
   },
   "files": [
+    "host.mjs",
     "index.mjs",
     "src",
     "page/index.html",
@@ -19,7 +20,8 @@
     "test",
     "AGENTS.md",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "os": [
     "darwin"
@@ -59,6 +61,20 @@
         }
       }
     ],
-    "options": {}
+    "options": {},
+    "permissions": []
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xTotoroX/magpie-antigravity-switch.git"
+  },
+  "homepage": "https://github.com/0xTotoroX/magpie-antigravity-switch#readme",
+  "bugs": {
+    "url": "https://github.com/0xTotoroX/magpie-antigravity-switch/issues"
+  },
+  "author": "Totoro (https://github.com/0xTotoroX)",
+  "engines": {
+    "node": ">=24",
+    "magpie": ">=0.1.2670"
   }
 }
