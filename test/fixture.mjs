@@ -31,6 +31,7 @@ export async function fixture(options = {}) {
   const files = new Map(), dirs = new Set(["/"]), calls = [];
   const readErrors = new Map();
   let keychain = options.keychain ? JSON.stringify(options.keychain) : null;
+  let keychainWrites = 0;
   const mockFs = {
     existsSync(p) { return files.has(String(p)) || dirs.has(String(p)); },
     mkdirSync(p) { dirs.add(String(p)); },
@@ -57,10 +58,13 @@ export async function fixture(options = {}) {
           return keychain;
         }
         if (args[0] === "add-generic-password") {
-          const isReplacement = args.includes("-T");
+          const isReplacement = ++keychainWrites === 1;
+          if (keychain !== null && args.includes("-T") && options.denyAclChange) {
+            throw new Error("fixture ACL authorization denied");
+          }
           if (options.failBeforeWrite || (!isReplacement && options.rollbackFails)) throw new Error("fixture write denied");
           keychain = args[args.indexOf("-w") + 1];
-          if (isReplacement && options.failAfterWrite) throw new Error("fixture ACL failed after data changed");
+          if (isReplacement && options.failAfterWrite) throw new Error("fixture write failed after data changed");
           return "";
         }
       }

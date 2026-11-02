@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 本地凭据、Magpie JSON、macOS security 与 language_server 状态。
- * [OUTPUT]: 账号状态、校验备份、账号操作与无凭据的 page/state.js。
+ * [OUTPUT]: 账号状态、校验备份、保留已有钥匙串授权的账号操作与无凭据的 page/state.js。
  * [POS]: CLI 与守护进程共用核心；运行身份与待生效凭据分别返回。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -157,10 +157,14 @@ export function writeKeychainAuth(payloadObj) {
   const encoded = `${KEYCHAIN_PREFIX}${Buffer.from(jsonStr, "utf8").toString("base64")}`;
 
   const previous = readKeychainRaw({ strict: true });
-  // -T "" removes implicit trust for new items. security merges this explicit
-  // desktop allowlist with any applications already trusted on existing items.
-  const trustedArgs = ["-T", ""];
-  if (fs.existsSync(LANGUAGE_SERVER_PATTERN)) trustedArgs.push("-T", LANGUAGE_SERVER_PATTERN);
+  // Existing items already own their access policy. Passing -T even with the
+  // same allowlist invokes SecKeychainItemSetAccess and prompts on every switch.
+  // Only new items need an explicit allowlist; -T "" removes creator trust.
+  const trustedArgs = [];
+  if (previous === null) {
+    trustedArgs.push("-T", "");
+    if (fs.existsSync(LANGUAGE_SERVER_PATTERN)) trustedArgs.push("-T", LANGUAGE_SERVER_PATTERN);
+  }
   const baseArgs = ["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT];
   try {
     execFileSync(
@@ -169,8 +173,8 @@ export function writeKeychainAuth(payloadObj) {
       { stdio: ["ignore", "ignore", "ignore"] }
     );
   } catch {
-    // security can update the data before an ACL update fails. Restore the
-    // previous data without widening or replacing the item's existing ACL.
+    // Preserve the previous data if a write reports failure after changing it.
+    // Restoring content must not widen or replace the item's existing ACL.
     if (previous !== null) {
       try {
         if (readKeychainRaw() !== previous) {

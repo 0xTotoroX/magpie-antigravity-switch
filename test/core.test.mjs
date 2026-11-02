@@ -3,14 +3,25 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fixture, auth, login, live, quota } from "./fixture.mjs";
 
-test("#1 successful Keychain update has restricted ACL and never deletes", async () => {
-  const f = await fixture({ keychain: auth("old@example.test"), desktopInstalled: true });
+test("#1 new Keychain item has restricted ACL and never deletes", async () => {
+  const f = await fixture({ desktopInstalled: true });
   f.core.writeKeychainAuth(auth("new@example.test"));
   assert.equal(f.keychain().id_token_email, "new@example.test");
   const args = f.calls.find(c => c.args[0].startsWith("add-generic")).args;
   assert(!args.includes("-A"));
   assert(args.includes("/Applications/Antigravity.app/Contents/Resources/bin/language_server"));
   assert.equal(args[args.indexOf("-T") + 1], "");
+  assert(!f.calls.some(c => c.args[0].startsWith("delete-")));
+});
+
+test("#1 existing Keychain credentials can change without requesting ACL authorization", async () => {
+  const f = await fixture({ keychain: auth("old@example.test"), desktopInstalled: true, denyAclChange: true });
+  f.core.writeKeychainAuth(auth("new@example.test"));
+  assert.equal(f.keychain().id_token_email, "new@example.test");
+  const args = f.calls.find(c => c.args[0] === "add-generic-password").args;
+  assert(args.includes("-U"));
+  assert(!args.includes("-T"));
+  assert(!args.includes("-A"));
   assert(!f.calls.some(c => c.args[0].startsWith("delete-")));
 });
 
