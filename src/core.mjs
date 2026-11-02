@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 本地凭据、Magpie JSON、macOS security 与 language_server 状态。
+ * [OUTPUT]: 账号状态、校验备份、账号操作与无凭据的 page/state.js。
+ * [POS]: CLI 与守护进程共用核心；运行身份与待生效凭据分别返回。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -58,6 +64,27 @@ function readJsonSafe(filePath, fallback = null) {
   }
 }
 
+// 写回前只允许“文件不存在”使用默认值；权限、空文件和损坏内容都必须保留。
+function readJsonForUpdate(filePath, fallback, validate) {
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, "utf8");
+  } catch (err) {
+    if (err.code === "ENOENT") return fallback;
+    throw new Error(`无法读取 ${path.basename(filePath)}，已停止写入`);
+  }
+  try {
+    const value = JSON.parse(raw);
+    if (!validate(value)) throw new Error("invalid shape");
+    return value;
+  } catch {
+    throw new Error(`${path.basename(filePath)} 格式无效，已保留原文件`);
+  }
+}
+
+const isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const readLogins = () => readJsonForUpdate(PATHS.loginsJson, [], Array.isArray);
+
 function writeJsonAtomic(filePath, data, mode = 0o600) {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
@@ -85,7 +112,7 @@ function writeTextAtomic(filePath, content, mode = 0o644) {
   fs.renameSync(tmpPath, filePath);
 }
 
-export function readKeychainRaw() {
+export function readKeychainRaw({ strict = false } = {}) {
   try {
     const out = execFileSync(
       "security",
@@ -93,7 +120,11 @@ export function readKeychainRaw() {
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
     );
     return out.trim();
-  } catch {
+  } catch (err) {
+    // errSecItemNotFound (-25300) is returned by security as exit status 44.
+    if (strict && err.status !== 44) {
+      throw new Error("无法读取 macOS 钥匙串，已停止备份和凭据替换，请检查访问权限");
+    }
     return null;
   }
 }
@@ -125,28 +156,33 @@ export function writeKeychainAuth(payloadObj) {
   const jsonStr = JSON.stringify(payloadObj);
   const encoded = `${KEYCHAIN_PREFIX}${Buffer.from(jsonStr, "utf8").toString("base64")}`;
 
-  // go-keyring creates Keychain items whose ACL rejects in-place -U updates via security CLI.
-  // Always delete existing matching items first, then add with -U -A.
-  for (let i = 0; i < 4; i++) {
-    try {
-      execFileSync(
-        "security",
-        ["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT],
-        { stdio: ["ignore", "ignore", "ignore"] }
-      );
-    } catch {
-      break;
-    }
-  }
-
+  const previous = readKeychainRaw({ strict: true });
+  // -T "" removes implicit trust for new items. security merges this explicit
+  // desktop allowlist with any applications already trusted on existing items.
+  const trustedArgs = ["-T", ""];
+  if (fs.existsSync(LANGUAGE_SERVER_PATTERN)) trustedArgs.push("-T", LANGUAGE_SERVER_PATTERN);
+  const baseArgs = ["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT];
   try {
     execFileSync(
       "security",
-      ["add-generic-password", "-U", "-A", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w", encoded],
+      [...baseArgs, ...trustedArgs, "-w", encoded],
       { stdio: ["ignore", "ignore", "ignore"] }
     );
   } catch {
-    throw new Error("写入 macOS 钥匙串失败，请检查钥匙串访问权限");
+    // security can update the data before an ACL update fails. Restore the
+    // previous data without widening or replacing the item's existing ACL.
+    if (previous !== null) {
+      try {
+        if (readKeychainRaw() !== previous) {
+          execFileSync("security", [...baseArgs, "-w", previous], { stdio: ["ignore", "ignore", "ignore"] });
+        }
+      } catch {
+        throw new Error("钥匙串更新及旧凭据恢复失败，请从本地备份恢复后再切换账号");
+      }
+    }
+    throw new Error(previous === null
+      ? "写入 macOS 钥匙串失败，请检查访问权限后重试"
+      : "写入 macOS 钥匙串失败，旧凭据已保留，请检查访问权限后重试");
   }
 }
 
@@ -206,8 +242,9 @@ function readVault() {
     },
     accounts: {}
   };
-  const data = readJsonSafe(PATHS.vaultJson, defaultVault);
-  if (!data || typeof data !== "object") return defaultVault;
+  const data = readJsonForUpdate(PATHS.vaultJson, defaultVault, (value) =>
+    isRecord(value) && (value.accounts === undefined || isRecord(value.accounts)) &&
+    (value.preferences === undefined || isRecord(value.preferences)));
   return {
     ...defaultVault,
     ...data,
@@ -226,11 +263,13 @@ function saveVault(vault) {
 
 export function ensureInitialBackup() {
   const vault = readVault();
-  if (vault.initialBackupPath && fs.existsSync(vault.initialBackupPath)) {
+  if (isBackupComplete(vault.initialBackupPath)) {
     return vault.initialBackupPath;
   }
 
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  // Read before recording completion. A denied read is not a missing item.
+  const keychainRaw = readKeychainRaw({ strict: true });
+  const stamp = `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomBytes(4).toString("hex")}`;
   const backupDir = path.join(PATHS.backupRoot, `initial-${stamp}`);
   fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
   try {
@@ -239,13 +278,16 @@ export function ensureInitialBackup() {
     // ignore
   }
 
-  const keychainRaw = readKeychainRaw();
+  const files = {};
   if (keychainRaw) {
     writeTextAtomic(path.join(backupDir, "keychain-gemini-antigravity.txt"), `${keychainRaw}\n`, 0o600);
     const parsed = parseKeychainSecret(keychainRaw);
     if (parsed) {
       writeJsonAtomic(path.join(backupDir, "keychain-gemini-antigravity.decoded.json"), parsed, 0o600);
     }
+    files["keychain-gemini-antigravity.txt"] = { sha256: fileHash(path.join(backupDir, "keychain-gemini-antigravity.txt")) };
+  } else {
+    files["keychain-gemini-antigravity.txt"] = { absent: true };
   }
 
   const filesToCopy = [
@@ -256,20 +298,45 @@ export function ensureInitialBackup() {
   ];
 
   for (const [destName, srcPath] of filesToCopy) {
-    if (fs.existsSync(srcPath)) {
-      const destPath = path.join(backupDir, destName);
-      fs.copyFileSync(srcPath, destPath);
-      try {
-        fs.chmodSync(destPath, 0o600);
-      } catch {
-        // ignore
-      }
+    let content;
+    try {
+      content = fs.readFileSync(srcPath);
+    } catch (err) {
+      if (err.code !== "ENOENT") throw new Error(`无法备份 ${path.basename(srcPath)}，已停止凭据替换`);
+      files[destName] = { absent: true };
+      continue;
     }
+    const destPath = path.join(backupDir, destName);
+    fs.writeFileSync(destPath, content, { mode: 0o600 });
+    fs.chmodSync(destPath, 0o600);
+    files[destName] = { sha256: fileHash(destPath) };
   }
 
+  writeJsonAtomic(path.join(backupDir, "manifest.json"), {
+    version: 1, complete: true, files,
+    previousBackupPath: vault.initialBackupPath || null
+  });
   vault.initialBackupPath = backupDir;
   saveVault(vault);
   return backupDir;
+}
+
+function fileHash(filePath) {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function isBackupComplete(backupDir) {
+  if (!backupDir) return false;
+  const manifest = readJsonSafe(path.join(backupDir, "manifest.json"));
+  const names = ["keychain-gemini-antigravity.txt", "antigravity-oauth-token.json",
+    "jetski-standalone-oauth-token.json", "app_storage.json", "magpie-logins.json"];
+  if (manifest?.version !== 1 || manifest.complete !== true) return false;
+  return names.every((name) => {
+    const entry = manifest.files?.[name];
+    if (entry?.absent === true) return true;
+    try { return Boolean(entry?.sha256) && fileHash(path.join(backupDir, name)) === entry.sha256; }
+    catch { return false; }
+  });
 }
 
 function getRunningLanguageServerInfo() {
@@ -342,7 +409,7 @@ function queryLiveLanguageServerQuota() {
 
     const tierName =
       status?.userTier?.name ||
-      (status?.planStatus?.planInfo?.planName === "Pro" ? "Google AI Pro" : null);
+      status?.planStatus?.planInfo?.planName || null;
 
     const configs = Array.isArray(status?.cascadeModelConfigData?.clientModelConfigs)
       ? status.cascadeModelConfigData.clientModelConfigs
@@ -373,7 +440,7 @@ function queryLiveLanguageServerQuota() {
       pools.push({
         pool: "Claude & GPT",
         window: "5 hours",
-        label: "Claude",
+        label: "Claude 5h",
         used: claudeQ.used,
         remaining: claudeQ.remaining,
         resetsAt: claudeQ.resetsAt
@@ -402,9 +469,9 @@ function queryLiveLanguageServerQuota() {
 
     return {
       email,
-      plan: tierName || "Google AI Pro",
+      plan: tierName,
       quota: {
-        plan: tierName || "Google AI Pro",
+        plan: tierName,
         updatedAt: Date.now(),
         error: null,
         pools
@@ -474,24 +541,20 @@ export function captureLiveClientAccounts() {
   const liveLs = queryLiveLanguageServerQuota();
   if (liveLs && liveLs.email) {
     const existing = vault.accounts[liveLs.email] || { email: liveLs.email };
-    if (
-      existing.plan !== liveLs.plan ||
-      JSON.stringify(existing.liveQuota?.pools) !== JSON.stringify(liveLs.quota?.pools)
-    ) {
-      vault.accounts[liveLs.email] = {
-        ...existing,
-        email: liveLs.email,
-        plan: liveLs.plan || existing.plan || null,
-        liveQuota: liveLs.quota
-      };
-      changed = true;
-    }
+    // 相同额度也要更新时间，才能与其他来源的缓存比较新旧。
+    vault.accounts[liveLs.email] = {
+      ...existing,
+      email: liveLs.email,
+      plan: liveLs.plan,
+      liveQuota: liveLs.quota
+    };
+    changed = true;
   }
 
   if (changed) {
     saveVault(vault);
   }
-  return { vault, keychainPayload, cliPayload, standalonePayload };
+  return { vault, keychainPayload, cliPayload, standalonePayload, liveLs };
 }
 
 function summarizeQuotaEntry(entry) {
@@ -511,7 +574,8 @@ function summarizeQuotaEntry(entry) {
     if (win) {
       const resetMs = win.resetsAt ? Date.parse(win.resetsAt) : 0;
       const isExpired = resetMs > 0 && resetMs <= nowMs;
-      const rawUsed = isExpired ? 0 : typeof win.used === "number" ? win.used : 0;
+      if (!Number.isFinite(win.used)) continue;
+      const rawUsed = Math.max(0, Math.min(100, win.used));
       const used = Math.round(rawUsed * 10) / 10;
       const remaining = Math.max(0, Math.round((100 - rawUsed) * 10) / 10);
       pools.push({
@@ -520,33 +584,49 @@ function summarizeQuotaEntry(entry) {
         label: spec.label,
         used,
         remaining,
+        stale: isExpired,
         resetsAt: win.resetsAt || null,
         resetSecs: typeof win.resetSecs === "number" ? win.resetSecs : null
       });
     }
   }
 
-  const c5 = pools.find((p) => p.pool === "Claude & GPT" && p.window === "5 hours");
-  const c7 = pools.find((p) => p.pool === "Claude & GPT" && p.window === "7 days");
-  const otherPools = pools.filter((p) => p.pool !== "Claude & GPT");
-  const concisePools = [];
-
-  if (c5 && c7) {
-    if (Math.abs(c5.remaining - c7.remaining) >= 15) {
-      concisePools.push(c5, c7);
-    } else {
-      concisePools.push({ ...(c5.remaining <= c7.remaining ? c5 : c7), label: "Claude" });
-    }
-  } else if (c5 || c7) {
-    concisePools.push({ ...(c5 || c7), label: "Claude" });
-  }
-  concisePools.push(...otherPools);
-
   return {
     plan: entry.quota.plan || null,
     updatedAt: entry.at || null,
     error: entry.error || null,
-    pools: concisePools
+    pools
+  };
+}
+
+function quotaTimestamp(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function mergeQuotaSummaries(...summaries) {
+  const sources = summaries.filter(Boolean).sort((a, b) => quotaTimestamp(a.updatedAt) - quotaTimestamp(b.updatedAt));
+  if (!sources.length) return null;
+  const pools = new Map();
+  let plan = null;
+  for (const source of sources) {
+    if (source.error) continue;
+    if (source.plan) plan = source.plan;
+    for (const pool of source.pools || []) {
+      if (!Number.isFinite(pool.remaining)) continue;
+      const resetMs = Date.parse(pool.resetsAt);
+      pools.set(`${pool.pool}/${pool.window}`, {
+        ...pool,
+        stale: Boolean(pool.stale || (resetMs > 0 && resetMs <= Date.now())),
+        updatedAt: source.updatedAt || null
+      });
+    }
+  }
+  return {
+    plan, pools: [...pools.values()],
+    updatedAt: sources.at(-1).updatedAt || null,
+    error: sources.every((s) => s.error) ? sources.at(-1).error : null
   };
 }
 
@@ -563,10 +643,10 @@ function isProPlanName(plan) {
 
 function computeRecommendationScore(account) {
   if (!account.hasCredentials || !account.isEligible) return -1;
-  const pools = account.quota?.pools || [];
+  const pools = (account.quota?.pools || []).filter((p) => !p.stale);
   const findRemaining = (labelOrPool) => {
-    const found = pools.find((p) => p.pool === labelOrPool || p.label === labelOrPool);
-    return found ? found.remaining : null;
+    const windows = pools.filter((p) => p.pool === labelOrPool || p.label === labelOrPool);
+    return windows.length ? Math.min(...windows.map((p) => p.remaining)) : null;
   };
 
   const claudeRem = findRemaining("Claude & GPT") ?? findRemaining("Claude");
@@ -576,14 +656,14 @@ function computeRecommendationScore(account) {
   const proBonus = account.isPro ? 25 : 0;
 
   if (pools.length > 0) {
-    const c = claudeRem ?? 50;
-    const a = argonRem ?? c;
-    const g = geminiRem ?? 100;
+    const c = claudeRem ?? 0;
+    const a = argonRem ?? 0;
+    const g = geminiRem ?? 0;
     const base = c * 0.55 + a * 0.3 + g * 0.15;
     return Math.round((base + proBonus) * 10) / 10;
   }
 
-  return (account.isPro ? 80 : 45) + (account.activeDesktop ? 5 : 0);
+  return proBonus;
 }
 
 function isLanguageServerRunning() {
@@ -633,14 +713,19 @@ function inspectElectronRestartState() {
 }
 
 export function getFullState() {
-  const { vault, keychainPayload, cliPayload } = captureLiveClientAccounts();
-  const logins = readJsonSafe(PATHS.loginsJson, []);
+  const { vault, keychainPayload, cliPayload, liveLs } = captureLiveClientAccounts();
+  const logins = readLogins();
   const quotas = readJsonSafe(PATHS.quotasJson, {});
   const appStorage = readJsonSafe(PATHS.appStorage, {});
 
   const desktopKeychainEmail = keychainPayload?.id_token_email || null;
   const desktopUiEmail = appStorage?.["jetski.onboarding.lastLoginUsername"] || null;
-  const desktopEmail = desktopKeychainEmail || desktopUiEmail || null;
+  const desktopSavedEmail = desktopKeychainEmail || desktopUiEmail || null;
+  const lsRunning = Boolean(liveLs) || isLanguageServerRunning();
+  const desktopRuntimeEmail = lsRunning ? liveLs?.email || null : null;
+  const desktopEmail = lsRunning ? desktopRuntimeEmail : desktopSavedEmail;
+  const desktopPending = Boolean(lsRunning && desktopSavedEmail && desktopRuntimeEmail !== desktopSavedEmail);
+  const desktopStatus = !lsRunning ? "stopped" : !desktopRuntimeEmail ? "unknown" : desktopPending ? "pending" : "running";
   const cliEmail = cliPayload?.id_token_email || null;
 
   const antigravityLogins = Array.isArray(logins)
@@ -658,6 +743,7 @@ export function getFullState() {
     allEmails.add(email);
   }
   if (desktopEmail) allEmails.add(desktopEmail);
+  if (desktopSavedEmail) allEmails.add(desktopSavedEmail);
   if (cliEmail) allEmails.add(cliEmail);
 
   const accounts = [];
@@ -666,10 +752,7 @@ export function getFullState() {
     const vaultEntry = vault.accounts?.[email] || null;
     const quotaEntry = quotas?.[`antigravity/${email}`] || null;
     const magpieQuota = summarizeQuotaEntry(quotaEntry);
-    const quotaSummary =
-      magpieQuota && magpieQuota.pools?.length > 0
-        ? magpieQuota
-        : vaultEntry?.liveQuota || magpieQuota || null;
+    const quotaSummary = mergeQuotaSummaries(magpieQuota, vaultEntry?.liveQuota);
 
     const hasMagpieAuth = Boolean(loginEntry?.auth?.refresh_token || loginEntry?.auth?.access_token);
     const hasVaultAuth = Boolean(vaultEntry?.auth?.refresh_token || vaultEntry?.clientPayload?.token?.refresh_token);
@@ -682,13 +765,13 @@ export function getFullState() {
     );
 
     const rawPlan =
+      quotaSummary?.plan ||
       vaultEntry?.plan ||
       loginEntry?.plan ||
-      quotaSummary?.plan ||
-      (loginEntry ? (isEligible ? "Antigravity Starter Quota" : "需验证 / 地区受限") : "Google AI Pro");
+      null;
 
     const isPro = isProPlanName(rawPlan);
-    const tierLabel = !isEligible ? "不可用" : isPro ? "Pro 会员" : "免费版";
+    const tierLabel = !isEligible ? "不可用" : isPro ? "Pro 会员" : rawPlan ? "免费版" : "套餐未知";
 
     const accountObj = {
       email,
@@ -696,6 +779,7 @@ export function getFullState() {
       plan: rawPlan,
       tierLabel,
       isPro,
+      planKnown: Boolean(rawPlan),
       isEligible,
       hasProject: isEligible,
       project: loginEntry?.project || loginEntry?.auth?.project || vaultEntry?.project || "aicode-consumers",
@@ -704,7 +788,9 @@ export function getFullState() {
       hasCredentials: hasMagpieAuth || hasVaultAuth,
       magpieOn: Boolean(loginEntry?.on),
       magpieFirst: Boolean(loginEntry?.first),
-      activeDesktop: desktopEmail === email,
+      activeDesktop: lsRunning && desktopRuntimeEmail === email,
+      savedDesktop: desktopSavedEmail === email,
+      pendingDesktop: desktopPending && desktopSavedEmail === email,
       activeDesktopKeychain: desktopKeychainEmail === email,
       activeDesktopUi: desktopUiEmail === email,
       activeCli: cliEmail === email,
@@ -737,7 +823,6 @@ export function getFullState() {
     null;
 
   const lsState = inspectElectronRestartState();
-  const lsRunning = isLanguageServerRunning();
 
   return {
     generatedAt: new Date().toISOString(),
@@ -748,14 +833,20 @@ export function getFullState() {
     counts: {
       total: accounts.length,
       pro: accounts.filter((a) => a.isPro && a.isEligible).length,
-      free: accounts.filter((a) => !a.isPro && a.isEligible).length,
+      free: accounts.filter((a) => a.planKnown && !a.isPro && a.isEligible).length,
+      unknown: accounts.filter((a) => !a.planKnown && a.isEligible).length,
       ineligible: accounts.filter((a) => !a.isEligible).length
     },
     current: {
       desktopEmail,
+      desktopRuntimeEmail,
+      desktopSavedEmail,
+      desktopPending,
+      desktopStatus,
       desktopKeychainEmail,
       desktopUiEmail,
-      desktopConsistent: !desktopKeychainEmail || !desktopUiEmail || desktopKeychainEmail === desktopUiEmail,
+      desktopConsistent: (!desktopKeychainEmail || !desktopUiEmail || desktopKeychainEmail === desktopUiEmail) &&
+        (!lsRunning || Boolean(desktopRuntimeEmail && desktopRuntimeEmail === desktopSavedEmail)),
       cliEmail,
       magpieFirstEmail,
       desktopRunning: lsRunning
@@ -912,7 +1003,14 @@ function buildStaticIndexHtml(state) {
 }
 
 export function syncStateFile() {
-  const state = getFullState();
+  let state;
+  try {
+    state = getFullState();
+  } catch (err) {
+    // 保留配置原件，并让页面显式呈现读取失败；下一轮同步可自动恢复。
+    state = { generatedAt: new Date().toISOString(), error: sanitizeErrorMessage(err),
+      current: {}, accounts: [], counts: { pro: 0, free: 0, unknown: 0, ineligible: 0 } };
+  }
   const jsContent = [
     "// Auto-generated by magpie-antigravity-switch (contains no tokens or secrets)",
     `globalThis.__AGY_SWITCH_STATE__ = ${JSON.stringify(state, null, 2)};`,
@@ -927,7 +1025,7 @@ export function syncStateFile() {
 
 function resolveAccountCredentials(email) {
   const { vault } = captureLiveClientAccounts();
-  const logins = readJsonSafe(PATHS.loginsJson, []);
+  const logins = readLogins();
   const loginEntry = Array.isArray(logins)
     ? logins.find((item) => item && item.agent === "antigravity" && getLoginEmail(item) === email)
     : null;
@@ -961,15 +1059,11 @@ function resolveAccountCredentials(email) {
 }
 
 export function importAccountToMagpie(email) {
+  const logins = readLogins();
   const { vault } = captureLiveClientAccounts();
   const vaultEntry = vault.accounts?.[email];
   if (!vaultEntry || !vaultEntry.auth?.refresh_token) {
     throw new Error(`未找到账号 ${email} 的凭证`);
-  }
-
-  const logins = readJsonSafe(PATHS.loginsJson, []);
-  if (!Array.isArray(logins)) {
-    throw new Error("无法读取 Magpie 账号配置");
   }
 
   const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -1003,7 +1097,7 @@ export function importAccountToMagpie(email) {
       user: email,
       seen: nowIso,
       on: true,
-      plan: vaultEntry.plan || "Google AI Pro",
+      ...(vaultEntry.plan ? { plan: vaultEntry.plan } : {}),
       project: vaultEntry.project || "aicode-consumers",
       auth: newAuth
     });
@@ -1038,8 +1132,8 @@ export function setPreferences(patch = {}) {
 }
 
 export function organizeAccounts({ onlyPro } = {}) {
+  const logins = readLogins();
   const { vault } = captureLiveClientAccounts();
-  const logins = readJsonSafe(PATHS.loginsJson, []);
   const quotas = readJsonSafe(PATHS.quotasJson, {});
 
   let importedCount = 0;
@@ -1051,6 +1145,8 @@ export function organizeAccounts({ onlyPro } = {}) {
     // 1. Ensure all vault Pro accounts are imported into Magpie logins.json
     for (const [email, vEntry] of Object.entries(vault.accounts || {})) {
       if (!vEntry?.auth?.refresh_token) continue;
+      const plan = mergeQuotaSummaries(summarizeQuotaEntry(quotas?.[`antigravity/${email}`]), vEntry.liveQuota)?.plan || vEntry.plan;
+      if (!isProPlanName(plan)) continue;
       const exists = logins.some((item) => item && item.agent === "antigravity" && getLoginEmail(item) === email);
       if (!exists) {
         logins.push({
@@ -1059,7 +1155,7 @@ export function organizeAccounts({ onlyPro } = {}) {
           user: email,
           seen: nowIso,
           on: true,
-          plan: vEntry.plan || "Google AI Pro",
+          plan,
           project: vEntry.project || "aicode-consumers",
           auth: {
             access_token: vEntry.auth.access_token || "",
@@ -1079,7 +1175,7 @@ export function organizeAccounts({ onlyPro } = {}) {
       if (!email) continue;
       const qEntry = quotas?.[`antigravity/${email}`];
       const vEntry = vault.accounts?.[email];
-      const plan = vEntry?.plan || item.plan || qEntry?.quota?.plan || null;
+      const plan = mergeQuotaSummaries(summarizeQuotaEntry(qEntry), vEntry?.liveQuota)?.plan || vEntry?.plan || item.plan || null;
       if (plan) {
         item.plan = plan;
       }
@@ -1419,6 +1515,12 @@ export function switchAccount({
     throw new Error("请指定要切换的目标邮箱账号");
   }
 
+  if (!["all", "desktop", "cli"].includes(target)) throw new Error("无效切换目标，请使用 all、desktop 或 cli");
+  // 在任何凭据写入前检查所有会写回的配置。
+  if (syncMagpie) readLogins();
+  const appStorage = (target === "all" || target === "desktop")
+    ? readJsonForUpdate(PATHS.appStorage, {}, isRecord) : null;
+
   ensureInitialBackup();
   captureLiveClientAccounts();
 
@@ -1427,7 +1529,6 @@ export function switchAccount({
 
   if (target === "all" || target === "desktop") {
     writeKeychainAuth(clientPayload);
-    const appStorage = readJsonSafe(PATHS.appStorage, {});
     if (appStorage && typeof appStorage === "object") {
       appStorage["jetski.onboarding.lastLoginUsername"] = email;
       writeJsonAtomic(PATHS.appStorage, appStorage, 0o600);
@@ -1442,7 +1543,7 @@ export function switchAccount({
   }
 
   if (syncMagpie) {
-    const logins = readJsonSafe(PATHS.loginsJson, []);
+    const logins = readLogins();
     if (Array.isArray(logins)) {
       const hasAccountInMagpie = logins.some(
         (item) => item && item.agent === "antigravity" && getLoginEmail(item) === email
@@ -1485,7 +1586,7 @@ export function switchAccount({
   };
 
   const summaryMsg = [
-    `已切换至 ${email}（${updatedTargets.join(" + ")}）`,
+    `已保存 ${email} 的登录设置（${updatedTargets.join(" + ")}）`,
     reloadResult?.reason ? `· ${reloadResult.reason}` : ""
   ]
     .filter(Boolean)
@@ -1504,12 +1605,15 @@ export function switchAccount({
   saveVault(vault);
 
   const state = syncStateFile();
+  const pending = (target === "all" || target === "desktop") &&
+    (Boolean(state.error) || (state.current.desktopRunning && state.current.desktopRuntimeEmail !== email));
   return {
     ok: true,
+    pending,
     email,
     target,
     reloadResult,
-    message: summaryMsg,
+    message: pending ? `${summaryMsg} · 桌面端待生效` : summaryMsg,
     state
   };
 }
@@ -1540,7 +1644,7 @@ export function executeCommandPayload(cmd) {
     } else if (cmd.type === "set-preferences") {
       result = setPreferences(cmd.preferences || {});
     } else if (cmd.type === "reload-desktop") {
-      const reloadRes = reloadDesktopLanguageServer(getFullState().current.desktopEmail || "");
+      const reloadRes = reloadDesktopLanguageServer(getFullState().current.desktopSavedEmail || "");
       result = {
         ok: reloadRes.reloaded,
         email: getFullState().current.desktopEmail,
@@ -1548,6 +1652,7 @@ export function executeCommandPayload(cmd) {
       };
     } else if (cmd.type === "refresh") {
       const state = syncStateFile();
+      if (state.error) throw new Error(state.error);
       result = {
         ok: true,
         email: state.current.desktopEmail,

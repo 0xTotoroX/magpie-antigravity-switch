@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: state.js 的账号快照与 Magpie 页面桥接。
+ * [OUTPUT]: 账号列表、待生效/未知/错误状态及用户操作指令。
+ * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 (() => {
   const PLUGIN_NAME = "magpie-antigravity-switch";
 
@@ -72,10 +78,11 @@
       if (!account.isEligible) {
         return `<div class="quota-line"><span class="quota-pill">账号需验证或地区受限</span></div>`;
       }
-      return `<div class="quota-line"><span class="quota-pill">配额正常</span></div>`;
+      return `<div class="quota-line"><span class="quota-pill">配额未知</span></div>`;
     }
 
     const items = pools.slice(0, 4).map((p) => {
+      if (p.stale) return `<span class="quota-pill">${escapeHtml(p.label)}：待刷新</span>`;
       const rem = Math.round(p.remaining);
       const cls = fillClass(rem);
       return `
@@ -91,7 +98,7 @@
   }
 
   function renderAccountRow(account, recommendedEmail) {
-    const isCurrentAll = account.activeDesktop && account.activeCli;
+    const isCurrentAll = account.activeDesktop && account.activeCli && account.savedDesktop;
     const isRecommended = account.email === recommendedEmail && !account.activeDesktop;
 
     const tierClass = !account.isEligible ? "tag-bad" : account.isPro ? "tag-pro" : "tag-free";
@@ -99,12 +106,13 @@
       `<span class="tag ${tierClass}">${escapeHtml(account.tierLabel || (account.isPro ? "Pro 会员" : "免费版"))}</span>`
     ];
 
-    if (account.activeDesktop && account.activeCli) {
+    if (isCurrentAll) {
       tags.push(`<span class="tag tag-active">当前使用中</span>`);
     } else {
       if (account.activeDesktop) tags.push(`<span class="tag tag-active">桌面端</span>`);
       if (account.activeCli) tags.push(`<span class="tag tag-active">CLI</span>`);
     }
+    if (account.pendingDesktop) tags.push(`<span class="tag tag-active">桌面端待生效</span>`);
 
     if (isRecommended) {
       tags.push(`<span class="tag tag-pro">推荐</span>`);
@@ -114,10 +122,10 @@
 
     let actionButtons = "";
     if (canSwitch) {
-      if (isCurrentAll) {
+      if (isCurrentAll || account.pendingDesktop) {
         actionButtons = `
           <button type="button" class="btn btn-ghost" data-action="reload-desktop" ${isBusy ? "disabled" : ""}>
-            刷新窗口
+            ${account.pendingDesktop ? "应用桌面端" : "刷新窗口"}
           </button>
         `;
       } else {
@@ -152,7 +160,11 @@
 
   function render(state) {
     if (!state) return;
+    const hadStateError = Boolean(currentState?.error);
     currentState = state;
+    const unavailable = isBusy || Boolean(state.error);
+    if (state.error) showToast(state.error, false);
+    else if (hadStateError) document.getElementById("toastBanner")?.classList.add("hidden");
 
     const cur = state.current || {};
     const counts = state.counts || { pro: 0, free: 0, ineligible: 0 };
@@ -160,24 +172,30 @@
 
     const subtitleEl = document.getElementById("subtitleText");
     if (subtitleEl) {
-      subtitleEl.textContent = `Pro 会员 ${counts.pro} 个 · 免费版 ${counts.free} 个${onlyPro ? "（当前仅显示 Pro 会员）" : ""}`;
+      subtitleEl.textContent = `Pro 会员 ${counts.pro} 个 · 免费版 ${counts.free} 个${counts.unknown ? ` · 套餐未知 ${counts.unknown} 个` : ""}${onlyPro ? "（当前仅显示 Pro 会员）" : ""}`;
     }
 
     const btnTogglePro = document.getElementById("btnTogglePro");
     if (btnTogglePro) {
       btnTogglePro.classList.toggle("is-active", onlyPro);
       btnTogglePro.textContent = onlyPro ? "已隐藏非会员" : "隐藏非会员";
-      btnTogglePro.disabled = isBusy;
+      btnTogglePro.disabled = unavailable;
     }
 
     const btnOrganize = document.getElementById("btnOrganize");
-    if (btnOrganize) btnOrganize.disabled = isBusy;
+    if (btnOrganize) btnOrganize.disabled = unavailable;
 
     const btnRefresh = document.getElementById("btnRefresh");
     if (btnRefresh) btnRefresh.disabled = isBusy;
 
     const desktopEmailEl = document.getElementById("curDesktopEmail");
-    if (desktopEmailEl) desktopEmailEl.textContent = cur.desktopEmail || "未登录";
+    if (desktopEmailEl) {
+      const account = cur.desktopEmail || (cur.desktopRunning ? "账号待确认" : "未登录");
+      desktopEmailEl.textContent = cur.desktopPending
+        ? `${account} → ${cur.desktopSavedEmail}（待生效）`
+        : `${account}${cur.desktopStatus === "stopped" && cur.desktopSavedEmail ? "（已保存，未运行）" : ""}`;
+      desktopEmailEl.title = desktopEmailEl.textContent;
+    }
 
     const desktopDotEl = document.getElementById("curDesktopDot");
     if (desktopDotEl) {
@@ -193,7 +211,7 @@
 
     const allAccounts = Array.isArray(state.accounts) ? state.accounts : [];
     const visibleAccounts = allAccounts.filter((acc) => {
-      if (acc.activeDesktop) return true;
+      if (acc.activeDesktop || acc.pendingDesktop) return true;
       if (!acc.isEligible && !showIneligibleTemp) return false;
       if (onlyPro && !acc.isPro) return false;
       return true;
@@ -227,7 +245,7 @@
     }
 
     const incomingSwitchId = state.lastSwitch?.cmdId || state.lastSwitch?.id || null;
-    if (incomingSwitchId && incomingSwitchId !== lastHandledSwitchId) {
+    if (!state.error && incomingSwitchId && incomingSwitchId !== lastHandledSwitchId) {
       lastHandledSwitchId = incomingSwitchId;
       isBusy = false;
       showToast(state.lastSwitch.message, state.lastSwitch.ok !== false);

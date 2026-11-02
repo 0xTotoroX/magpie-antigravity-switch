@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: core.mjs、插件指令文件与本地文件变更。
+ * [OUTPUT]: 后台监听器、去重后的指令执行及页面状态同步。
+ * [POS]: Magpie 插件的独立后台进程；按源码签名热重载。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -172,7 +178,11 @@ export function startInProcessWatcher() {
       process.exit(0);
     }
     checkPluginsCommand();
-    syncStateFile();
+    try {
+      syncStateFile();
+    } catch {
+      // A transient state-file write failure must not stop future recovery.
+    }
   }, 4000);
 
   return () => {

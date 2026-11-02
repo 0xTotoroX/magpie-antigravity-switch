@@ -1,5 +1,12 @@
 #!/usr/bin/env node
+/**
+ * [INPUT]: core.mjs、daemon.mjs，以及 CLI 参数或 Magpie 插件加载。
+ * [OUTPUT]: 默认插件函数与 magpie-agy-switch 命令。
+ * [POS]: 包入口；仅直接执行或通过 bin 软链接执行时运行 CLI。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
 import {
   getFullState,
   importAccountToMagpie,
@@ -28,13 +35,15 @@ export default AntigravitySwitchPlugin;
 
 function printStatus() {
   const state = syncStateFile();
+  if (state.error) throw new Error(state.error);
   const daemonInfo = ensureBackgroundWatcher();
   console.log("=== Antigravity 账号状态 ===");
-  console.log(`桌面端 (Antigravity.app): ${state.current.desktopEmail || "未登录"}${state.current.desktopRunning ? " [运行中]" : " [未运行]"}`);
+  console.log(`桌面端 (Antigravity.app): ${state.current.desktopEmail || (state.current.desktopRunning ? "账号待确认" : "未登录")}${state.current.desktopRunning ? " [运行中]" : " [未运行]"}`);
+  if (state.current.desktopPending) console.log(`桌面端待生效           : ${state.current.desktopSavedEmail}`);
   console.log(`CLI (agy)               : ${state.current.cliEmail || "未登录"}`);
   console.log(`Magpie 网关首选         : ${state.current.magpieFirstEmail || "未设置"}`);
   console.log(`推荐充裕账号            : ${state.recommendedEmail || "无"}`);
-  console.log(`会员统计                : Pro 会员 ${state.counts.pro} 个 / 免费版 ${state.counts.free} 个 / 异常 ${state.counts.ineligible} 个`);
+  console.log(`会员统计                : Pro 会员 ${state.counts.pro} 个 / 免费版 ${state.counts.free} 个 / 套餐未知 ${state.counts.unknown} 个 / 异常 ${state.counts.ineligible} 个`);
   console.log(`筛选模式                : ${state.preferences?.onlyPro ? "仅显示 Pro 会员" : "显示全部可用账号"}`);
   console.log(`后台同步守护进程        : PID ${daemonInfo.pid}`);
   console.log("\n账号列表:");
@@ -48,7 +57,7 @@ function printStatus() {
       .filter(Boolean)
       .join(", ");
     const poolText = (acc.quota?.pools || [])
-      .map((p) => `${p.label}:剩余${p.remaining}%`)
+      .map((p) => `${p.label}:${p.stale ? "待刷新" : `剩余${p.remaining}%`}`)
       .join(" | ");
     console.log(
       `- ${acc.email} [${badges}] ${poolText ? `-> ${poolText}` : ""}`
@@ -117,7 +126,7 @@ async function runCli() {
   }
 
   if (cmd === "reload") {
-    const res = reloadDesktopLanguageServer(getFullState().current.desktopEmail || "");
+    const res = reloadDesktopLanguageServer(getFullState().current.desktopSavedEmail || "");
     console.log(res.reason);
     return;
   }
@@ -137,10 +146,14 @@ async function runCli() {
   console.log("  node index.mjs reload");
 }
 
-const isDirectRun =
-  process.argv[1] &&
-  fileURLToPath(import.meta.url) === process.argv[1] &&
-  !process.argv.includes("--daemon");
+let isDirectRun = false;
+try {
+  isDirectRun = Boolean(process.argv[1]) &&
+    fs.realpathSync(fileURLToPath(import.meta.url)) === fs.realpathSync(process.argv[1]) &&
+    !process.argv.includes("--daemon");
+} catch {
+  // Plugin imports need no CLI entrypoint.
+}
 
 if (isDirectRun) {
   runCli().catch((err) => {

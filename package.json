@@ -11,7 +11,13 @@
   "files": [
     "index.mjs",
     "src",
-    "page",
+    "page/index.html",
+    "page/app.js",
+    "page/style.css",
+    "page/icon.svg",
+    "page/AGENTS.md",
+    "test",
+    "AGENTS.md",
     "README.md",
     "LICENSE"
   ],
@@ -19,6 +25,7 @@
     "darwin"
   ],
   "scripts": {
+    "test": "node --experimental-vm-modules --test test/*.test.mjs",
     "clean": "node -e \"import('node:fs').then(fs => fs.writeFileSync('page/state.js', '// Auto-generated at runtime\\nglobalThis.__AGY_SWITCH_STATE__ = null;\\n'))\""
   },
   "keywords": [
