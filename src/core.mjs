@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 本地凭据、Magpie JSON、macOS security 与 language_server 状态。
- * [OUTPUT]: 账号状态、校验备份、保留已有钥匙串授权的账号操作与无凭据的 page/state.js。
+ * [OUTPUT]: 原始套餐名称、会员分类、账号状态、校验备份、保留已有钥匙串授权的账号操作与无凭据的 page/state.js。
  * [POS]: CLI 与守护进程共用核心；状态脚本供 page/app.js 渲染，运行身份与待生效凭据分别返回。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -640,9 +640,13 @@ function getLoginEmail(item) {
   return typeof raw === "string" && raw.includes("@") ? raw.trim() : null;
 }
 
-function isProPlanName(plan) {
-  if (!plan || typeof plan !== "string") return false;
-  return /pro|ultra|enterprise/i.test(plan);
+function describePlan(plan) {
+  const name = typeof plan === "string" && plan.trim() ? plan.trim() : null;
+  const normalized = (name || "").replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  const paid = /^(?:(?:google\s+)?ai\s+|antigravity\s+)?(pro|ultra|enterprise)\b/i.exec(normalized);
+  const family = paid?.[1]?.toLowerCase() || (/^gemini\s+enterprise\b/i.test(normalized) ? "enterprise" : null);
+  const isFree = !family && /^(?:(?:google\s+)?ai\s+|antigravity\s+)?(?:free|starter)\b/i.test(normalized);
+  return { name, family: family || (isFree ? "free" : "unknown"), isPaid: Boolean(family), isFree, recognized: Boolean(family || isFree) };
 }
 
 function computeRecommendationScore(account) {
@@ -657,17 +661,17 @@ function computeRecommendationScore(account) {
   const argonRem = findRemaining("Gemini 4 Argon") ?? findRemaining("Argon");
   const geminiRem = findRemaining("Gemini");
 
-  const proBonus = account.isPro ? 25 : 0;
+  const memberBonus = account.isPaid ? 25 : 0;
 
   if (pools.length > 0) {
     const c = claudeRem ?? 0;
     const a = argonRem ?? 0;
     const g = geminiRem ?? 0;
     const base = c * 0.55 + a * 0.3 + g * 0.15;
-    return Math.round((base + proBonus) * 10) / 10;
+    return Math.round((base + memberBonus) * 10) / 10;
   }
 
-  return proBonus;
+  return memberBonus;
 }
 
 function isLanguageServerRunning() {
@@ -774,16 +778,21 @@ export function getFullState() {
       loginEntry?.plan ||
       null;
 
-    const isPro = isProPlanName(rawPlan);
-    const tierLabel = !isEligible ? "不可用" : isPro ? "Pro 会员" : rawPlan ? "免费版" : "套餐未知";
+    const planInfo = describePlan(rawPlan);
+    const tierLabel = !isEligible ? "不可用" : planInfo.name || "套餐未知";
 
     const accountObj = {
       email,
       name: getLoginEmail(loginEntry) || email,
-      plan: rawPlan,
+      plan: planInfo.name,
       tierLabel,
-      isPro,
-      planKnown: Boolean(rawPlan),
+      planFamily: planInfo.family,
+      isPaid: planInfo.isPaid,
+      isFree: planInfo.isFree,
+      membershipKnown: planInfo.recognized,
+      // Compatibility alias: older pages use isPro for all recognized members.
+      isPro: planInfo.isPaid,
+      planKnown: Boolean(planInfo.name),
       isEligible,
       hasProject: isEligible,
       project: loginEntry?.project || loginEntry?.auth?.project || vaultEntry?.project || "aicode-consumers",
@@ -809,7 +818,7 @@ export function getFullState() {
   }
 
   accounts.sort((a, b) => {
-    if (a.isPro !== b.isPro) return a.isPro ? -1 : 1;
+    if (a.isPaid !== b.isPaid) return a.isPaid ? -1 : 1;
     if (a.isEligible !== b.isEligible) return a.isEligible ? -1 : 1;
     if (a.activeDesktop !== b.activeDesktop) return a.activeDesktop ? -1 : 1;
     if (a.activeCli !== b.activeCli) return a.activeCli ? -1 : 1;
@@ -819,7 +828,7 @@ export function getFullState() {
   const onlyProPref = Boolean(vault.preferences?.onlyPro);
   const recommended =
     [...accounts]
-      .filter((a) => a.hasCredentials && a.isEligible && (!onlyProPref || a.isPro))
+      .filter((a) => a.hasCredentials && a.isEligible && (!onlyProPref || a.isPaid))
       .sort((a, b) => b.score - a.score)[0] ||
     [...accounts]
       .filter((a) => a.hasCredentials && a.isEligible)
@@ -836,9 +845,11 @@ export function getFullState() {
     },
     counts: {
       total: accounts.length,
-      pro: accounts.filter((a) => a.isPro && a.isEligible).length,
-      free: accounts.filter((a) => a.planKnown && !a.isPro && a.isEligible).length,
-      unknown: accounts.filter((a) => !a.planKnown && a.isEligible).length,
+      paid: accounts.filter((a) => a.isPaid && a.isEligible).length,
+      // Compatibility aggregate; the visible label is no longer restricted to Pro.
+      pro: accounts.filter((a) => a.isPaid && a.isEligible).length,
+      free: accounts.filter((a) => a.isFree && a.isEligible).length,
+      unknown: accounts.filter((a) => !a.membershipKnown && a.isEligible).length,
       ineligible: accounts.filter((a) => !a.isEligible).length
     },
     current: {
@@ -987,7 +998,7 @@ export function setPreferences(patch = {}) {
   };
   saveVault(vault);
   const state = syncStateFile();
-  const modeText = vault.preferences.onlyPro ? "已开启「仅显示 Pro 会员」" : "已显示全部可用账号";
+  const modeText = vault.preferences.onlyPro ? "已开启「仅显示已识别会员」" : "已显示全部可用账号";
   return {
     ok: true,
     action: "set-preferences",
@@ -1007,11 +1018,11 @@ export function organizeAccounts({ onlyPro } = {}) {
   if (Array.isArray(logins)) {
     const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
-    // 1. Ensure all vault Pro accounts are imported into Magpie logins.json
+    // 1. Ensure all recognized paid accounts are imported into Magpie logins.json
     for (const [email, vEntry] of Object.entries(vault.accounts || {})) {
       if (!vEntry?.auth?.refresh_token) continue;
       const plan = mergeQuotaSummaries(summarizeQuotaEntry(quotas?.[`antigravity/${email}`]), vEntry.liveQuota)?.plan || vEntry.plan;
-      if (!isProPlanName(plan)) continue;
+      if (!describePlan(plan).isPaid) continue;
       const exists = logins.some((item) => item && item.agent === "antigravity" && getLoginEmail(item) === email);
       if (!exists) {
         logins.push({
@@ -1054,13 +1065,13 @@ export function organizeAccounts({ onlyPro } = {}) {
       }
     }
 
-    // 3. Sort antigravity accounts inside logins.json: Pro first, then eligible free, then ineligible
+    // 3. Sort antigravity accounts inside logins.json: Members first, then other eligible accounts, then ineligible
     const agyItems = logins.filter((item) => item && item.agent === "antigravity");
     const otherItems = logins.filter((item) => !item || item.agent !== "antigravity");
     agyItems.sort((a, b) => {
-      const aPro = isProPlanName(a.plan);
-      const bPro = isProPlanName(b.plan);
-      if (aPro !== bPro) return aPro ? -1 : 1;
+      const aPaid = describePlan(a.plan).isPaid;
+      const bPaid = describePlan(b.plan).isPaid;
+      if (aPaid !== bPaid) return aPaid ? -1 : 1;
       const aElig = Boolean(a.project || a.auth?.project);
       const bElig = Boolean(b.project || b.auth?.project);
       if (aElig !== bElig) return aElig ? -1 : 1;
@@ -1080,9 +1091,9 @@ export function organizeAccounts({ onlyPro } = {}) {
 
   const state = syncStateFile();
   const details = [];
-  if (importedCount > 0) details.push(`纳管 ${importedCount} 个本地 Pro 账号`);
+  if (importedCount > 0) details.push(`纳管 ${importedCount} 个本地会员账号`);
   if (disabledCount > 0) details.push(`停用 ${disabledCount} 个异常账号`);
-  details.push(`共 ${state.counts.pro} 个 Pro 会员置顶`);
+  details.push(`共 ${state.counts.paid} 个会员置顶`);
 
   return {
     ok: true,

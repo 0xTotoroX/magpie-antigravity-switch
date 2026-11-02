@@ -1,6 +1,6 @@
 /**
  * [INPUT]: state.js 的账号快照与 Magpie 页面桥接。
- * [OUTPUT]: 账号列表、待生效/未知/错误状态及用户操作指令。
+ * [OUTPUT]: 原始档位与会员筛选、待生效/未知/错误状态及用户操作指令。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -101,9 +101,10 @@
     const isCurrentAll = account.activeDesktop && account.activeCli && account.savedDesktop;
     const isRecommended = account.email === recommendedEmail && !account.activeDesktop;
 
-    const tierClass = !account.isEligible ? "tag-bad" : account.isPro ? "tag-pro" : "tag-free";
+    const isPaid = account.isPaid ?? account.isPro;
+    const tierClass = !account.isEligible ? "tag-bad" : isPaid ? "tag-pro" : "tag-free";
     const tags = [
-      `<span class="tag ${tierClass}">${escapeHtml(account.tierLabel || (account.isPro ? "Pro 会员" : "免费版"))}</span>`
+      `<span class="tag ${tierClass}">${escapeHtml(account.tierLabel || account.plan || (isPaid ? "会员" : "套餐未知"))}</span>`
     ];
 
     if (isCurrentAll) {
@@ -172,7 +173,7 @@
 
     const subtitleEl = document.getElementById("subtitleText");
     if (subtitleEl) {
-      subtitleEl.textContent = `Pro 会员 ${counts.pro} 个 · 免费版 ${counts.free} 个${counts.unknown ? ` · 套餐未知 ${counts.unknown} 个` : ""}${onlyPro ? "（当前仅显示 Pro 会员）" : ""}`;
+      subtitleEl.textContent = `会员 ${counts.paid ?? counts.pro ?? 0} 个 · 免费版 ${counts.free} 个${counts.unknown ? ` · 套餐未知 ${counts.unknown} 个` : ""}${onlyPro ? "（当前仅显示已识别会员）" : ""}`;
     }
 
     const btnTogglePro = document.getElementById("btnTogglePro");
@@ -213,7 +214,7 @@
     const visibleAccounts = allAccounts.filter((acc) => {
       if (acc.activeDesktop || acc.pendingDesktop) return true;
       if (!acc.isEligible && !showIneligibleTemp) return false;
-      if (onlyPro && !acc.isPro) return false;
+      if (onlyPro && !(acc.isPaid ?? acc.isPro)) return false;
       return true;
     });
 
@@ -234,7 +235,7 @@
     if (footerEl) {
       if (hiddenCount > 0) {
         footerEl.classList.remove("hidden");
-        footerEl.innerHTML = `已隐藏 ${hiddenCount} 个非会员或异常账号 · <button type="button" class="link-btn" id="btnShowHidden">显示全部</button>`;
+        footerEl.innerHTML = `已隐藏 ${hiddenCount} 个免费、未知或异常账号 · <button type="button" class="link-btn" id="btnShowHidden">显示全部</button>`;
       } else if (showIneligibleTemp && counts.ineligible > 0) {
         footerEl.classList.remove("hidden");
         footerEl.innerHTML = `<button type="button" class="link-btn" id="btnHideIneligible">收起异常账号</button>`;

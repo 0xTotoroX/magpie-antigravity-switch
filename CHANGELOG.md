@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- 保留接口返回的 Pro、Ultra、Enterprise 原始档位名称，不再统一标记为 Pro。
+- 会员筛选和账号整理覆盖已识别会员，未知套餐不计入免费版。
+- CLI 增加 members-only 名称，兼容原 pro-only 命令。
+
 ## 0.1.2
 
 - 首次公开发布 Antigravity Switch：查看并切换本机 Antigravity 桌面端、CLI 与 Magpie 账号。

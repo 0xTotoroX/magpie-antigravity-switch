@@ -221,3 +221,51 @@ for (const plan of [null, "Starter", "Google AI Pro"]) {
     assert.equal(f.read(f.core.PATHS.loginsJson).length, plan === "Google AI Pro" ? 1 : 0);
   });
 }
+
+for (const [plan, family, paid, free] of [
+  ["Google AI Pro", "pro", true, false],
+  ["Google AI Ultra", "ultra", true, false],
+  ["Google AI Ultra (5x)", "ultra", true, false],
+  ["Google AI Ultra (20x)", "ultra", true, false],
+  ["Enterprise", "enterprise", true, false],
+  ["Gemini Enterprise", "enterprise", true, false],
+  ["Antigravity Starter Quota", "free", false, true],
+  ["Free", "free", false, true],
+  ["Google AI Plus", "unknown", false, false],
+  ["Professional Preview", "unknown", false, false]
+]) {
+  test(`membership preserves the observed name and eligibility for ${plan}`, async () => {
+    const email = "membership@example.test";
+    const f = await fixture({ keychain: auth(email), liveStatus: live(email, 50, plan) });
+    const state = f.core.getFullState();
+    const account = state.accounts[0];
+    assert.equal(account.plan, plan);
+    assert.equal(account.tierLabel, plan);
+    assert.equal(account.planFamily, family);
+    assert.equal(account.isPaid, paid);
+    assert.equal(account.isPro, paid, "legacy member flag stays compatible");
+    assert.equal(account.isFree, free);
+    assert.equal(account.membershipKnown, paid || free);
+    assert.equal(state.counts.paid, paid ? 1 : 0);
+    assert.equal(state.counts.free, free ? 1 : 0);
+    assert.equal(state.counts.unknown, paid || free ? 0 : 1);
+    const result = f.core.organizeAccounts();
+    assert.equal(f.read(f.core.PATHS.loginsJson).length, paid ? 1 : 0);
+    assert.doesNotMatch(result.message, /Pro 会员/);
+  });
+}
+
+test("an Ultra plan without a multiplier never invents 5x or 20x", async () => {
+  const f = await fixture({ keychain: auth("ultra@example.test"), liveStatus: live("ultra@example.test", 100, "Google AI Ultra") });
+  const account = f.core.getFullState().accounts[0];
+  assert.equal(account.tierLabel, "Google AI Ultra");
+  assert.doesNotMatch(account.tierLabel, /5x|20x/i);
+});
+
+test("member-only preferences keep the old storage key without a Pro-only label", async () => {
+  const f = await fixture();
+  const result = f.core.setPreferences({ onlyPro: true });
+  assert.equal(result.state.preferences.onlyPro, true);
+  assert.match(result.message, /仅显示已识别会员/);
+  assert.doesNotMatch(result.message, /Pro 会员/);
+});

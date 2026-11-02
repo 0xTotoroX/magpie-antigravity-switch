@@ -64,3 +64,21 @@ test("#3 page surfaces read errors, disables writes and clears the recovered err
   assert.equal(p.el("btnOrganize").disabled, false);
   assert.equal(p.el("toastBanner").classList.contains("hidden"), true);
 });
+
+test("member filtering includes Ultra and Enterprise and preserves every plan label", () => {
+  const state = baseState();
+  state.counts = { paid: 4, pro: 1, free: 1, unknown: 1, ineligible: 0 };
+  state.accounts = ["Google AI Pro", "Google AI Ultra (5x)", "Google AI Ultra (20x)", "Enterprise"].map((plan, i) => ({
+    email: `paid-${i}@example.test`, tierLabel: plan, plan,
+    isPaid: true, isPro: false, isEligible: true, hasCredentials: true
+  }));
+  state.accounts.push({ email: "free@example.test", tierLabel: "Starter", isPaid: false, isEligible: true });
+  state.accounts.push({ email: "unknown@example.test", tierLabel: "Unrecognized plan", isPaid: false, isEligible: true });
+  const p = page(state);
+  assert.match(p.el("subtitleText").textContent, /会员 4 个/);
+  assert.doesNotMatch(p.el("subtitleText").textContent, /Pro 会员/);
+  const rows = p.el("accountList").innerHTML;
+  for (const plan of ["Google AI Pro", "Google AI Ultra (5x)", "Google AI Ultra (20x)", "Enterprise"]) assert(rows.includes(plan));
+  assert.doesNotMatch(rows, /free@example.test|unknown@example.test/);
+  assert.match(p.el("hiddenFooter").innerHTML, /免费、未知或异常/);
+});

@@ -18,6 +18,7 @@ macOS 上的 Magpie 页面插件与 CLI，使用 JavaScript ES modules、Node.js
 - 真实凭据、备份与 `page/state.js` 不提交到 Git。写回账号配置前必须严格解析；只允许缺失文件使用默认值。
 - 钥匙串更新不删除原条目，不使用 `-A`。已有条目保留访问权限，只在新建条目时设置有限的可信应用；不要每次切号重复提交 `-T`。需要 macOS 授权时遵循系统提示，不通过降低访问保护绕过。
 - `current.desktopRuntimeEmail` 是已查询到的运行身份；`desktopSavedEmail` 是保存的凭据身份。`desktopPending` 不等于切换已完成，查询失败不猜测运行身份。
-- 配额按池和窗口比较时间；同池的限制取最小剩余量。无套餐证据时保留未知，不自动纳管为 Pro。
+- 配额按池和窗口比较时间；同池的限制取最小剩余量。套餐按接口原名显示；明确识别 Pro、Ultra 和 Enterprise 会员，只有已识别免费套餐计入免费版。未知名称不自动纳管。`isPro`、`counts.pro` 和 `onlyPro` 为旧版本兼容字段，会员判断使用 `isPaid`。
 - `npm test` 是隔离回归验证；真实账号切换与系统授权交互需另外说明实际验证范围。
+- README 和公开 Release 只写用户需要的功能、安装与兼容说明；个人开发、本机版本和验收过程留在私有 Runbook。
 - 源码可能由已安装插件直接使用，修改 `core.mjs` 或 `daemon.mjs` 会触发后台进程自动重载。先在隔离副本验证，再同步。

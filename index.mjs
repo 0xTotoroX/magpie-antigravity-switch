@@ -43,8 +43,8 @@ function printStatus() {
   console.log(`CLI (agy)               : ${state.current.cliEmail || "未登录"}`);
   console.log(`Magpie 网关首选         : ${state.current.magpieFirstEmail || "未设置"}`);
   console.log(`推荐充裕账号            : ${state.recommendedEmail || "无"}`);
-  console.log(`会员统计                : Pro 会员 ${state.counts.pro} 个 / 免费版 ${state.counts.free} 个 / 套餐未知 ${state.counts.unknown} 个 / 异常 ${state.counts.ineligible} 个`);
-  console.log(`筛选模式                : ${state.preferences?.onlyPro ? "仅显示 Pro 会员" : "显示全部可用账号"}`);
+  console.log(`会员统计                : 会员 ${state.counts.paid ?? state.counts.pro} 个 / 免费版 ${state.counts.free} 个 / 套餐未知 ${state.counts.unknown} 个 / 异常 ${state.counts.ineligible} 个`);
+  console.log(`筛选模式                : ${state.preferences?.onlyPro ? "仅显示已识别会员" : "显示全部可用账号"}`);
   console.log(`后台同步守护进程        : PID ${daemonInfo.pid}`);
   console.log("\n账号列表:");
   for (const acc of state.accounts) {
@@ -101,13 +101,13 @@ async function runCli() {
   }
 
   if (cmd === "organize") {
-    const onlyPro = args.includes("--only-pro") ? true : args.includes("--all") ? false : undefined;
+    const onlyPro = (args.includes("--members-only") || args.includes("--only-pro")) ? true : args.includes("--all") ? false : undefined;
     const res = organizeAccounts({ onlyPro });
     console.log(res.message);
     return;
   }
 
-  if (cmd === "pro-only") {
+  if (cmd === "members-only" || cmd === "pro-only") {
     const val = args[1] !== "off" && args[1] !== "false";
     const res = setPreferences({ onlyPro: val });
     console.log(res.message);
@@ -140,8 +140,8 @@ async function runCli() {
   console.log("用法:");
   console.log("  node index.mjs status");
   console.log("  node index.mjs switch <email|best> [--no-reload] [--target=all|desktop|cli] [--no-magpie]");
-  console.log("  node index.mjs organize [--only-pro|--all]");
-  console.log("  node index.mjs pro-only [on|off]");
+  console.log("  node index.mjs organize [--members-only|--all]");
+  console.log("  node index.mjs members-only [on|off]（兼容 pro-only）");
   console.log("  node index.mjs import <email>");
   console.log("  node index.mjs reload");
 }
