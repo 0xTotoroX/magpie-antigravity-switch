@@ -52,7 +52,7 @@ test("#8 page does not describe an unknown quota or plan as normal or free", () 
   const p = page(state);
   assert.match(p.el("subtitleText").textContent, /套餐未知 1 个/);
   assert.match(p.el("accountList").innerHTML, /套餐未知/);
-  assert.match(p.el("accountList").innerHTML, /配额未知/);
+  assert.match(p.el("accountList").innerHTML, /GPT \/ Claude 5h：未知/);
   assert.doesNotMatch(p.el("accountList").innerHTML, /配额正常/);
 });
 test("#3 page surfaces read errors, disables writes and clears the recovered error", () => {
@@ -80,5 +80,64 @@ test("member filtering includes Ultra and Enterprise and preserves every plan la
   const rows = p.el("accountList").innerHTML;
   for (const plan of ["Google AI Pro", "Google AI Ultra (5x)", "Google AI Ultra (20x)", "Enterprise"]) assert(rows.includes(plan));
   assert.doesNotMatch(rows, /free@example.test|unknown@example.test/);
-  assert.match(p.el("hiddenFooter").innerHTML, /免费、未知或异常/);
+  assert.match(p.el("hiddenFooter").innerHTML, /免费或套餐未知/);
+});
+
+test("quota columns stay in model/window order regardless of input order", () => {
+  const state = baseState();
+  state.accounts = [{ email: "columns@example.test", isPaid: true, isEligible: true, hasCredentials: true,
+    quota: { updatedAt: Date.now(), pools: [
+      { pool: "Gemini 4 Argon", window: "7 days", remaining: 30 },
+      { pool: "Gemini", window: "7 days", remaining: 84 },
+      { pool: "Claude & GPT", window: "7 days", remaining: 0 },
+      { pool: "Gemini", window: "5 hours", remaining: 86 },
+      { pool: "Claude & GPT", window: "5 hours", remaining: 100 }
+    ] }
+  }];
+  const html = page(state).el("accountList").innerHTML;
+  assert.deepEqual(html.match(/aria-label="[^"]+：[^"]+"/g), [
+    'aria-label="GPT / Claude 5h：100%"', 'aria-label="GPT / Claude 7d：0%"',
+    'aria-label="Gemini 5h：86%"', 'aria-label="Gemini 7d：84%"', 'aria-label="Gemini 4 Argon 7d：30%"'
+  ]);
+  assert.match(html, /aria-valuenow="0"/);
+  assert.match(html, /width:0%/);
+  assert.doesNotMatch(html, /5 小时|7 天/);
+});
+
+test("missing, invalid and expired cells keep their position without inventing zero", () => {
+  const state = baseState();
+  state.accounts = [{ email: "states@example.test", isPaid: true, isEligible: true, hasCredentials: true,
+    quota: { pools: [
+      { pool: "Claude & GPT", window: "5 hours", remaining: 0 },
+      { pool: "Claude & GPT", window: "7 days", remaining: 90, resetsAt: "2000-01-01T00:00:00Z" },
+      { pool: "Gemini", window: "5 hours", remaining: null }
+    ] }
+  }];
+  const html = page(state).el("accountList").innerHTML;
+  assert.deepEqual(html.match(/aria-label="[^"]+：[^"]+"/g), [
+    'aria-label="GPT / Claude 5h：0%"', 'aria-label="GPT / Claude 7d：待刷新"',
+    'aria-label="Gemini 5h：未知"', 'aria-label="Gemini 7d：未知"', 'aria-label="Gemini 4 Argon 7d：未知"'
+  ]);
+  assert.equal((html.match(/role="progressbar"/g) || []).length, 1);
+});
+
+test("account types are separate sections and inactive accounts stay collapsed across updates", () => {
+  const state = baseState();
+  state.preferences.onlyPro = false;
+  state.accounts = [
+    { email: "unknown@example.test", isEligible: true, hasCredentials: true },
+    { email: "free@example.test", isEligible: true, isFree: true, plan: "Starter", hasCredentials: true },
+    { email: "paid@example.test", isEligible: true, isPaid: true, plan: "Google AI Ultra (20x)", hasCredentials: true },
+    { email: "unavailable@example.test", isEligible: false }
+  ];
+  const p = page(state), html = p.el("accountList").innerHTML;
+  assert(html.indexOf('aria-label="会员账号"') < html.indexOf('aria-label="免费账号"'));
+  assert(html.indexOf('aria-label="免费账号"') < html.indexOf('aria-label="套餐未知"'));
+  assert.match(html, /Google AI Ultra \(20x\)/);
+  assert.doesNotMatch(html, /unavailable@example.test/);
+  assert.match(p.el("unavailableList").innerHTML, /unavailable@example.test/);
+  assert.equal(p.el("unavailableAccounts").hidden, false);
+  p.el("unavailableAccounts").open = true;
+  p.render(state);
+  assert.equal(p.el("unavailableAccounts").open, true);
 });

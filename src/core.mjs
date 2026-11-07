@@ -1,6 +1,6 @@
 /**
- * [INPUT]: 本地凭据、Magpie JSON、macOS security 与 language_server 状态。
- * [OUTPUT]: 原始套餐名称、会员分类、账号状态、校验备份、保留已有钥匙串授权的账号操作与无凭据的 page/state.js。
+ * [INPUT]: Magpie 套餐与配额 JSON、本地凭据、macOS security 与 language_server 登录身份。
+ * [OUTPUT]: Magpie 单一来源的套餐与配额窗口、会员分类、登录状态、校验备份、账号操作与无凭据的 page/state.js。
  * [POS]: CLI 与守护进程共用核心；状态脚本供 page/app.js 渲染，运行身份与待生效凭据分别返回。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -379,7 +379,7 @@ function getRunningLanguageServerInfo() {
   }
 }
 
-function queryLiveLanguageServerQuota() {
+function queryLiveLanguageServerIdentity() {
   const lsInfo = getRunningLanguageServerInfo();
   if (!lsInfo || !lsInfo.port || !lsInfo.csrf) return null;
 
@@ -411,76 +411,8 @@ function queryLiveLanguageServerQuota() {
     const email = status?.email?.trim?.();
     if (!email) return null;
 
-    const tierName =
-      status?.userTier?.name ||
-      status?.planStatus?.planInfo?.planName || null;
-
-    const configs = Array.isArray(status?.cascadeModelConfigData?.clientModelConfigs)
-      ? status.cascadeModelConfigData.clientModelConfigs
-      : [];
-
-    const findModelQuota = (regex) => {
-      const found = configs.find((m) => regex.test(m?.label || ""));
-      if (!found || !found.quotaInfo) return null;
-      const frac =
-        typeof found.quotaInfo.remainingFraction === "number"
-          ? found.quotaInfo.remainingFraction
-          : 0;
-      const remaining = Math.max(0, Math.min(100, Math.round(frac * 1000) / 10));
-      const used = Math.max(0, Math.min(100, Math.round((100 - remaining) * 10) / 10));
-      return {
-        used,
-        remaining,
-        resetsAt: found.quotaInfo.resetTime || null
-      };
-    };
-
-    const claudeQ = findModelQuota(/claude|sonnet|opus/i);
-    const argonQ = findModelQuota(/argon/i);
-    const geminiQ = findModelQuota(/gemini\s+3\.8|flash/i);
-
-    const pools = [];
-    if (claudeQ) {
-      pools.push({
-        pool: "Claude & GPT",
-        window: "5 hours",
-        label: "Claude 5h",
-        used: claudeQ.used,
-        remaining: claudeQ.remaining,
-        resetsAt: claudeQ.resetsAt
-      });
-    }
-    if (argonQ) {
-      pools.push({
-        pool: "Gemini 4 Argon",
-        window: "7 days",
-        label: "Argon",
-        used: argonQ.used,
-        remaining: argonQ.remaining,
-        resetsAt: argonQ.resetsAt
-      });
-    }
-    if (geminiQ) {
-      pools.push({
-        pool: "Gemini",
-        window: "5 hours",
-        label: "Gemini",
-        used: geminiQ.used,
-        remaining: geminiQ.remaining,
-        resetsAt: geminiQ.resetsAt
-      });
-    }
-
-    return {
-      email,
-      plan: tierName,
-      quota: {
-        plan: tierName,
-        updatedAt: Date.now(),
-        error: null,
-        pools
-      }
-    };
+    // 本地接口只确认运行身份；套餐与窗口额度统一由 Magpie 提供。
+    return { email };
   } catch {
     return null;
   }
@@ -541,19 +473,7 @@ export function captureLiveClientAccounts() {
     upsertFromClient(standalonePayload, "standalone-token");
   }
 
-  // Also capture live tier & model quota directly from the running language_server
-  const liveLs = queryLiveLanguageServerQuota();
-  if (liveLs && liveLs.email) {
-    const existing = vault.accounts[liveLs.email] || { email: liveLs.email };
-    // 相同额度也要更新时间，才能与其他来源的缓存比较新旧。
-    vault.accounts[liveLs.email] = {
-      ...existing,
-      email: liveLs.email,
-      plan: liveLs.plan,
-      liveQuota: liveLs.quota
-    };
-    changed = true;
-  }
+  const liveLs = queryLiveLanguageServerIdentity();
 
   if (changed) {
     saveVault(vault);
@@ -566,16 +486,17 @@ function summarizeQuotaEntry(entry) {
   const windows = Array.isArray(entry.quota.windows) ? entry.quota.windows : [];
   const pools = [];
   const desired = [
-    { pool: "Claude & GPT", name: "5 hours", label: "Claude 5h" },
-    { pool: "Claude & GPT", name: "7 days", label: "Claude 7d" },
-    { pool: "Gemini 4 Argon", name: "7 days", label: "Argon" },
-    { pool: "Gemini", name: "5 hours", label: "Gemini" }
+    { pool: "Claude & GPT", name: "5 hours", label: "GPT / Claude 5h" },
+    { pool: "Claude & GPT", name: "7 days", label: "GPT / Claude 7d" },
+    { pool: "Gemini", name: "5 hours", label: "Gemini 5h" },
+    { pool: "Gemini", name: "7 days", label: "Gemini 7d" },
+    { pool: "Gemini 4 Argon", name: "7 days", label: "Gemini 4 Argon 7d" }
   ];
 
   const nowMs = Date.now();
   for (const spec of desired) {
     const win = windows.find((w) => w.pool === spec.pool && w.name === spec.name);
-    if (win) {
+    if (win && !entry.error) {
       const resetMs = win.resetsAt ? Date.parse(win.resetsAt) : 0;
       const isExpired = resetMs > 0 && resetMs <= nowMs;
       if (!Number.isFinite(win.used)) continue;
@@ -596,41 +517,11 @@ function summarizeQuotaEntry(entry) {
   }
 
   return {
+    source: "magpie",
     plan: entry.quota.plan || null,
     updatedAt: entry.at || null,
     error: entry.error || null,
     pools
-  };
-}
-
-function quotaTimestamp(value) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function mergeQuotaSummaries(...summaries) {
-  const sources = summaries.filter(Boolean).sort((a, b) => quotaTimestamp(a.updatedAt) - quotaTimestamp(b.updatedAt));
-  if (!sources.length) return null;
-  const pools = new Map();
-  let plan = null;
-  for (const source of sources) {
-    if (source.error) continue;
-    if (source.plan) plan = source.plan;
-    for (const pool of source.pools || []) {
-      if (!Number.isFinite(pool.remaining)) continue;
-      const resetMs = Date.parse(pool.resetsAt);
-      pools.set(`${pool.pool}/${pool.window}`, {
-        ...pool,
-        stale: Boolean(pool.stale || (resetMs > 0 && resetMs <= Date.now())),
-        updatedAt: source.updatedAt || null
-      });
-    }
-  }
-  return {
-    plan, pools: [...pools.values()],
-    updatedAt: sources.at(-1).updatedAt || null,
-    error: sources.every((s) => s.error) ? sources.at(-1).error : null
   };
 }
 
@@ -759,8 +650,7 @@ export function getFullState() {
     const loginEntry = antigravityLogins.find((item) => getLoginEmail(item) === email) || null;
     const vaultEntry = vault.accounts?.[email] || null;
     const quotaEntry = quotas?.[`antigravity/${email}`] || null;
-    const magpieQuota = summarizeQuotaEntry(quotaEntry);
-    const quotaSummary = mergeQuotaSummaries(magpieQuota, vaultEntry?.liveQuota);
+    const quotaSummary = summarizeQuotaEntry(quotaEntry);
 
     const hasMagpieAuth = Boolean(loginEntry?.auth?.refresh_token || loginEntry?.auth?.access_token);
     const hasVaultAuth = Boolean(vaultEntry?.auth?.refresh_token || vaultEntry?.clientPayload?.token?.refresh_token);
@@ -768,13 +658,11 @@ export function getFullState() {
       loginEntry?.project ||
       loginEntry?.auth?.project ||
       quotaSummary?.plan ||
-      vaultEntry?.plan ||
       !loginEntry
     );
 
     const rawPlan =
       quotaSummary?.plan ||
-      vaultEntry?.plan ||
       loginEntry?.plan ||
       null;
 
@@ -937,6 +825,8 @@ function resolveAccountCredentials(email) {
 export function importAccountToMagpie(email) {
   const logins = readLogins();
   const { vault } = captureLiveClientAccounts();
+  const quotas = readJsonSafe(PATHS.quotasJson, {});
+  const plan = summarizeQuotaEntry(quotas?.[`antigravity/${email}`])?.plan;
   const vaultEntry = vault.accounts?.[email];
   if (!vaultEntry || !vaultEntry.auth?.refresh_token) {
     throw new Error(`未找到账号 ${email} 的凭证`);
@@ -959,7 +849,7 @@ export function importAccountToMagpie(email) {
       user: email,
       seen: nowIso,
       on: true,
-      plan: vaultEntry.plan || logins[existingIdx].plan || undefined,
+      plan: plan || logins[existingIdx].plan || undefined,
       project: logins[existingIdx].project || vaultEntry.project || "aicode-consumers",
       auth: {
         ...(logins[existingIdx].auth || {}),
@@ -973,7 +863,7 @@ export function importAccountToMagpie(email) {
       user: email,
       seen: nowIso,
       on: true,
-      ...(vaultEntry.plan ? { plan: vaultEntry.plan } : {}),
+      ...(plan ? { plan } : {}),
       project: vaultEntry.project || "aicode-consumers",
       auth: newAuth
     });
@@ -1021,7 +911,7 @@ export function organizeAccounts({ onlyPro } = {}) {
     // 1. Ensure all recognized paid accounts are imported into Magpie logins.json
     for (const [email, vEntry] of Object.entries(vault.accounts || {})) {
       if (!vEntry?.auth?.refresh_token) continue;
-      const plan = mergeQuotaSummaries(summarizeQuotaEntry(quotas?.[`antigravity/${email}`]), vEntry.liveQuota)?.plan || vEntry.plan;
+      const plan = summarizeQuotaEntry(quotas?.[`antigravity/${email}`])?.plan;
       if (!describePlan(plan).isPaid) continue;
       const exists = logins.some((item) => item && item.agent === "antigravity" && getLoginEmail(item) === email);
       if (!exists) {
@@ -1050,8 +940,7 @@ export function organizeAccounts({ onlyPro } = {}) {
       const email = getLoginEmail(item);
       if (!email) continue;
       const qEntry = quotas?.[`antigravity/${email}`];
-      const vEntry = vault.accounts?.[email];
-      const plan = mergeQuotaSummaries(summarizeQuotaEntry(qEntry), vEntry?.liveQuota)?.plan || vEntry?.plan || item.plan || null;
+      const plan = summarizeQuotaEntry(qEntry)?.plan || item.plan || null;
       if (plan) {
         item.plan = plan;
       }
@@ -1532,7 +1421,7 @@ export function executeCommandPayload(cmd) {
       result = {
         ok: true,
         email: state.current.desktopEmail,
-        message: "已同步最新账号与配额状态"
+        message: "已读取 Magpie 配额与本地登录状态"
       };
     } else {
       return null;

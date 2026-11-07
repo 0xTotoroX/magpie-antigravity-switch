@@ -12,7 +12,7 @@
       <header class="topbar">
         <div class="title-block">
           <h1>Antigravity Switch</h1>
-          <p class="subtitle" id="subtitleText">桌面端 · CLI · Magpie 网关三端同步与实时配额</p>
+          <p class="subtitle" id="subtitleText">正在读取账号状态…</p>
         </div>
         <div class="toolbar">
           <button type="button" class="btn btn-filter" id="btnTogglePro" title="仅显示已识别的会员账号">
@@ -21,7 +21,7 @@
           <button type="button" class="btn" id="btnOrganize" title="自动纳管已识别会员账号、停用异常账号并置顶会员">
             整理账号
           </button>
-          <button type="button" class="btn btn-ghost" id="btnRefresh" title="刷新最新状态">
+          <button type="button" class="btn btn-ghost" id="btnRefresh" title="重新读取 Magpie 配额缓存与本地登录状态">
             刷新
           </button>
         </div>
@@ -48,10 +48,15 @@
       </section>
 
       <section class="list-section">
+        <p class="quota-source">额度来自 Magpie</p>
         <div class="account-list" id="accountList">
-          <div class="account-empty-state">正在同步本地账号与配额…</div>
+          <div class="account-empty-state">正在读取 Magpie 配额与本地登录状态…</div>
         </div>
         <div class="hidden-footer hidden" id="hiddenFooter"></div>
+        <details class="unavailable-accounts" id="unavailableAccounts" hidden>
+          <summary id="unavailableSummary">不可用账号</summary>
+          <div class="account-list" id="unavailableList"></div>
+        </details>
       </section>
     </main>
 

@@ -1,3 +1,9 @@
+/*
+ * [INPUT]: Magpie 主题变量与账号分组、五窗口额度页面结构。
+ * [OUTPUT]: 宽屏固定列位、窄屏模型分组及状态样式。
+ * [POS]: Antigravity Switch 页面唯一样式入口。
+ * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+ */
 :root {
   color-scheme: light dark;
   --bg: var(--magpie-bg, #f6f7f9);
@@ -7,10 +13,10 @@
   --border: var(--magpie-line, rgba(24, 24, 27, 0.09));
   --primary: var(--magpie-accent, #2563eb);
   --primary-soft: var(--magpie-accent-soft, rgba(37, 99, 235, 0.12));
-  --success: var(--magpie-green, #10b981);
+  --success: var(--magpie-green, #047857);
   --success-soft: rgba(16, 185, 129, 0.14);
-  --warning: var(--magpie-amber, #f59e0b);
-  --danger: var(--magpie-red, #ef4444);
+  --warning: var(--magpie-amber, #92400e);
+  --danger: var(--magpie-red, #b91c1c);
   --danger-soft: rgba(239, 68, 68, 0.12);
 }
 
@@ -55,7 +61,7 @@ body {
 }
 
 .shell {
-  max-width: 780px;
+  max-width: 1280px;
   margin: 0 auto;
   padding: 20px 18px 36px;
   display: flex;
@@ -99,7 +105,7 @@ body {
   padding: 6px 12px;
   border-radius: 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
   white-space: nowrap;
 }
 
@@ -122,7 +128,7 @@ body {
 .btn-primary {
   background: var(--primary);
   border-color: transparent;
-  color: #fff;
+  color: var(--magpie-accent-fg, #fff);
   font-weight: 600;
 }
 
@@ -237,6 +243,65 @@ body {
   gap: 8px;
 }
 
+.quota-source {
+  align-self: flex-end;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.quota-header,
+.account-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.45fr) minmax(0, 3fr) 144px;
+  column-gap: 24px;
+  padding: 14px 16px;
+}
+
+.quota-header {
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.quota-header .quota-group {
+  gap: 6px;
+}
+
+.quota-header strong {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.actions-heading {
+  text-align: right;
+}
+
+.account-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-group + .account-group {
+  margin-top: 12px;
+}
+
+.account-group h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.account-group h2 span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
 .account-empty-state {
   padding: 32px 16px;
   text-align: center;
@@ -248,16 +313,11 @@ body {
 }
 
 .account-row {
-  display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 12px 14px;
   transition: border-color 0.15s ease;
-  flex-wrap: wrap;
 }
 
 .account-row.is-current {
@@ -268,8 +328,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-width: 220px;
-  flex: 1 1 260px;
+  min-width: 0;
 }
 
 .account-title-line {
@@ -282,7 +341,19 @@ body {
 .account-email {
   font-size: 14px;
   font-weight: 600;
-  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+.account-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.account-updated,
+.account-unavailable {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .tag {
@@ -298,7 +369,8 @@ body {
   color: var(--success);
 }
 
-.tag-free {
+.tag-free,
+.tag-unknown {
   background: rgba(128, 128, 128, 0.12);
   color: var(--muted);
 }
@@ -313,46 +385,89 @@ body {
   color: var(--primary);
 }
 
-.quota-line {
+.account-quotas {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr);
+  column-gap: 20px;
+  min-width: 0;
+}
+
+.quota-group {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.quota-pill {
-  display: inline-flex;
-  align-items: center;
+  flex-direction: column;
+  min-width: 0;
   gap: 6px;
-  font-size: 12px;
-  color: var(--muted);
 }
 
-.quota-pill strong {
-  color: var(--text);
+.quota-group-label,
+.quota-period {
+  display: none;
+}
+
+.quota-windows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 12px;
+}
+
+.quota-windows.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.quota-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  min-width: 0;
+}
+
+.quota-value {
+  font-size: 14px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.quota-mini-bar {
-  width: 36px;
+.quota-cell.is-low .quota-value {
+  color: var(--danger);
+}
+
+.quota-cell.is-unknown .quota-value {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.quota-reset {
+  min-height: 17px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.quota-bar {
+  display: block;
+  width: 100%;
   height: 5px;
   border-radius: 999px;
   background: rgba(128, 128, 128, 0.16);
   overflow: hidden;
 }
 
-.quota-mini-fill {
+.quota-fill {
+  display: block;
   height: 100%;
   border-radius: 999px;
   background: var(--success);
 }
 
-.quota-mini-fill.is-warn {
+.quota-cell.is-warn .quota-fill {
   background: var(--warning);
 }
 
-.quota-mini-fill.is-low {
+.quota-cell.is-low .quota-fill {
   background: var(--danger);
 }
 
@@ -360,7 +475,7 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
+  justify-self: end;
 }
 
 .hidden-footer {
@@ -381,4 +496,126 @@ body {
 
 .link-btn:hover {
   text-decoration: underline;
+}
+
+.unavailable-accounts {
+  margin-top: 12px;
+}
+
+.unavailable-accounts summary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.btn:focus-visible,
+.link-btn:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--primary-soft);
+  color: var(--text);
+}
+
+@media (prefers-color-scheme: dark) {
+  .btn-primary {
+    color: var(--magpie-accent-fg, #0b1220);
+  }
+}
+
+@media (max-width: 1060px) {
+  .quota-header,
+  .account-row {
+    grid-template-columns: minmax(220px, 1.25fr) minmax(0, 3fr) 132px;
+    column-gap: 16px;
+    padding: 12px;
+  }
+
+  .account-quotas {
+    column-gap: 14px;
+  }
+
+  .account-actions .btn {
+    padding-inline: 10px;
+  }
+}
+
+@media (max-width: 960px) {
+  .quota-header {
+    display: none;
+  }
+
+  .account-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 16px;
+  }
+
+  .account-main {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .account-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .account-quotas,
+  .account-unavailable {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .quota-group-label,
+  .quota-period {
+    display: block;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .quota-group-label {
+    color: var(--text);
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+}
+
+@media (max-width: 620px) {
+  .shell {
+    padding: 18px 14px 28px;
+  }
+
+  .toolbar {
+    flex-wrap: wrap;
+  }
+
+  .account-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .account-quotas {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px 24px;
+  }
+
+  .account-actions {
+    grid-column: 1;
+    grid-row: 3;
+    justify-self: start;
+  }
+
+  .quota-reset {
+    white-space: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .account-row {
+    transition: none;
+  }
 }

@@ -22,8 +22,9 @@ export const live = (email, remaining = 0, plan = "Google AI Pro") => ({
 export const quota = (c5, c7, at = Date.now()) => ({ at, quota: { plan: "Google AI Pro", windows: [
   { pool: "Claude & GPT", name: "5 hours", used: 100 - c5, resetsAt: future() },
   { pool: "Claude & GPT", name: "7 days", used: 100 - c7, resetsAt: future() },
-  { pool: "Gemini 4 Argon", name: "7 days", used: 0, resetsAt: future() },
-  { pool: "Gemini", name: "5 hours", used: 0, resetsAt: future() }
+  { pool: "Gemini", name: "5 hours", used: 0, resetsAt: future() },
+  { pool: "Gemini", name: "7 days", used: 0, resetsAt: future() },
+  { pool: "Gemini 4 Argon", name: "7 days", used: 0, resetsAt: future() }
 ] } });
 
 // 所有生产文件系统和子进程依赖均被替换；未列出的命令直接报错。
