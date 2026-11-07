@@ -23,13 +23,13 @@
 从 npm 安装：
 
 ```sh
-magpie plugin add npm:magpie-antigravity-switch@0.1.3
+magpie plugin add npm:magpie-antigravity-switch@0.1.4
 ```
 
 也可以从 GitHub 安装：
 
 ```sh
-magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.1.3
+magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.1.4
 ```
 
 也可以在 Magpie 的「插件 → 发现 → 非官方插件 · GitHub」中筛选 **Antigravity Switch**。安装后从侧边栏打开同名页面。
@@ -39,7 +39,7 @@ magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.1.3
 独立 CLI 需要 Node.js 24+：
 
 ```sh
-npm install --global magpie-antigravity-switch@0.1.3
+npm install --global magpie-antigravity-switch@0.1.4
 magpie-agy-switch status
 ```
 
@@ -68,6 +68,8 @@ node index.mjs members-only on
 ## 数据与权限
 
 额度来自 Magpie 的本地缓存。页面的「刷新」重新读取该缓存与本地登录状态，不会逐个账号向服务端强制查询；实际更新时间显示在各账号下。未返回的窗口显示「未知」，过期读数显示「待刷新」。
+
+套餐标签沿用 Magpie 返回的原名。账号升级后若仍显示旧 Starter 标签，请参见 [Magpie 套餐刷新问题 #5621](https://github.com/yetone/magpie/issues/5621)；本插件不会自行推断或修改订阅档位。
 
 账号凭据和备份保存在本机，不随插件发布。macOS 可能要求访问钥匙串；拒绝授权时操作停止。请只在自己有权使用的账号之间切换。
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.4
 
 - 套餐与额度统一读取 Magpie，本地只确认当前登录账号，旧本地额度快照不再覆盖周期读数。
 - 固定 GPT / Claude、Gemini 的 5h / 7d 与 Gemini 4 Argon 的 7d 列位，补全 Gemini 周额度并显示更新时间。

@@ -1,7 +1,7 @@
 {
   "name": "magpie-antigravity-switch",
-  "version": "0.1.3",
-  "description": "在 Magpie 内快速切换 Antigravity 桌面端与 CLI 登录账号，同步查看各账号实时配额与自动备份客户端凭证",
+  "version": "0.1.4",
+  "description": "在 Magpie 内快速切换 Antigravity 桌面端与 CLI 登录账号，查看 Magpie 中各账号的配额并自动备份客户端凭证",
   "type": "module",
   "main": "./host.mjs",
   "exports": "./host.mjs",
