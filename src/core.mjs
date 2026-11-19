@@ -686,9 +686,10 @@ export function captureLiveClientAccounts() {
 
 function quotaWindowMatches(window, spec) {
   if (!window) return false;
-  const [pool, period] = window.pool
-    ? [window.pool, window.name]
-    : String(window.name || "").split(" · ", 2);
+  const [name, qualifiedPeriod] = String(window.name || "").split(" · ", 2);
+  if (qualifiedPeriod && window.pool && name !== window.pool) return false;
+  const pool = window.pool || (qualifiedPeriod ? name : null);
+  const period = qualifiedPeriod || name;
   return period === spec.name && (pool === spec.pool ||
     (spec.pool === "Gemini 4 Carbon" && /^(?:gemini[ -]+4[ -]+)?carbon(?: models?)?$/i.test(pool)));
 }
@@ -709,11 +710,11 @@ function summarizeQuotaEntry(entry) {
 
   const nowMs = Date.now();
   for (const spec of desired) {
-    const win = windows.find((window) => quotaWindowMatches(window, spec));
+    const win = windows.find((window) => quotaWindowMatches(window, spec) &&
+      !window.text && !window.unlimited && Number.isFinite(window.used));
     if (win && !entry.error) {
       const resetMs = win.resetsAt ? Date.parse(win.resetsAt) : 0;
       const isExpired = resetMs > 0 && resetMs <= nowMs;
-      if (!Number.isFinite(win.used)) continue;
       const rawUsed = Math.max(0, Math.min(100, win.used));
       const used = Math.round(rawUsed * 10) / 10;
       const remaining = Math.max(0, Math.round((100 - rawUsed) * 10) / 10);
@@ -1992,11 +1993,15 @@ export async function refreshCliAccounts({ force = false, now = () => Date.now()
         const { quota, cached } = await refreshMagpieQuota(user);
         if (quota.error) throw new Error(quota.error);
         const readAt = quota.readAt || quota.asOf || attemptedAt;
-        const windows = Array.isArray(quota.windows) ? quota.windows : [];
-        updates.set(email, {
-          providerHome: home, fetchedAt: readAt, attemptedAt,
-          quota: { plan: quota.plan || null, readAt, windows }
-        });
+        const reading = {
+          plan: quota.plan || null,
+          readAt,
+          windows: Array.isArray(quota.windows) ? quota.windows : []
+        };
+        if (summarizeQuotaEntry({ quota: reading }).pools.length === 0) {
+          throw new Error("Magpie 未返回可显示的额度读数");
+        }
+        updates.set(email, { providerHome: home, fetchedAt: readAt, attemptedAt, quota: reading });
         if (cached || quota.readDeferred || quota.asOf) skipped++;
         else refreshed++;
       } catch (err) {

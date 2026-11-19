@@ -66,6 +66,7 @@
     [/^Magpie 未能刷新这个账号的额度$/, "Magpie could not refresh this account's quota."],
     [/^Magpie 返回了无效的额度数据$/, "Magpie returned invalid quota data."],
     [/^Magpie 未返回这个账号的额度$/, "Magpie did not return quotas for this account."],
+    [/^Magpie 未返回可显示的额度读数$/, "Magpie did not return readable quota values."],
     [/^(Antigravity .+) 返回 HTTP (\d+)$/, "$1 returned HTTP $2"],
     [/^已在浏览器打开 GitHub 仓库，欢迎点亮 Star$/, "Opened the GitHub repository."],
     [/^已读取 Magpie 配额与本地登录状态$/, "Magpie quotas and local sign-ins reloaded."],

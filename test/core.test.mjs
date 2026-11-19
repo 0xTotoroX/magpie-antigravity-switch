@@ -596,7 +596,8 @@ test("refresh queries only enabled Magpie accounts and rereads the roster after 
   f.options.refreshQuota = (args) => {
     assert.deepEqual(Array.from(args), ["quota", "refresh", "agy-cli", enabled.user, "--json"]);
     f.write(loginsJson, [disabled]);
-    return { cards: [{ provider: "agy-cli", user: enabled.user, plan: "Google AI Pro", windows: [] }] };
+    return { cards: [{ provider: "agy-cli", user: enabled.user, plan: "Google AI Pro",
+      windows: [{ pool: "Gemini", name: "Gemini · 7 days", used: 25 }] }] };
   };
 
   const result = await f.core.refreshCliAccounts({ force: true });
@@ -616,9 +617,9 @@ test("Magpie refresh keeps exact provider quotas, honors cache age and preserves
   let nowMs = Date.now();
   const refresh = (force = false) => f.core.refreshCliAccounts({ force, now: () => nowMs });
   const windows = [
-    { name: "Claude & GPT · 5 hours", used: 50, resetsAt: future() },
-    { name: "Gemini · 7 days", used: 25, resetsAt: future() },
-    { name: "Gemini 4 Argon · 7 days", used: 100, resetsAt: future() }
+    { pool: "Claude & GPT", name: "Claude & GPT · 5 hours", used: 50, resetsAt: future() },
+    { pool: "Gemini", name: "Gemini · 7 days", used: 25, resetsAt: future() },
+    { pool: "Gemini 4 Argon", name: "Gemini 4 Argon · 7 days", used: 100, resetsAt: future() }
   ];
   const card = { provider: "agy-cli", user: email, plan: "Google AI Pro", windows };
   f.options.refreshQuota = () => ({ cards: [
@@ -641,6 +642,16 @@ test("Magpie refresh keeps exact provider quotas, honors cache age and preserves
   const limited = await refresh(true);
   assert.equal(limited.refreshed, 0);
   assert.match(limited.message, /沿用 1 个账号的近期额度/);
+
+  f.options.refreshQuota = () => ({ cards: [{ ...card, windows: [
+    { pool: "Gemini", name: "Gemini · 7 days", used: 0, text: true },
+    { pool: "Gemini", name: "Claude & GPT · 7 days", used: 0 }
+  ] }] });
+  const unreadable = await refresh(true);
+  assert.equal(unreadable.refreshed, 0);
+  assert.equal(unreadable.failed, 1);
+  assert.match(unreadable.state.accounts[0].quota.refreshError, /未返回可显示的额度读数/);
+  assert.deepEqual(Array.from(unreadable.state.accounts[0].quota.pools, (p) => p.remaining), [50, 75, 0]);
 
   nowMs += 60_000;
   f.options.refreshQuota = () => ({ cards: [{ ...card, error: "agy usage query timed out.", windows: [] }] });
