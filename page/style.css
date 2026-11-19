@@ -1,6 +1,6 @@
 /*
  * [INPUT]: Magpie 主题变量与账号分组、五窗口额度页面结构。
- * [OUTPUT]: Magpie 列表样式、宽屏额度列位及窄屏模型分组。
+ * [OUTPUT]: Magpie 列表、行内登录标签及额度布局。
  * [POS]: Antigravity Switch 页面唯一样式入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -79,16 +79,56 @@ body {
   flex-wrap: wrap;
 }
 
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .title-block h1 {
   font-size: 18px;
   font-weight: 650;
   letter-spacing: -0.01em;
 }
 
-.subtitle {
-  font-size: 12.5px;
-  color: var(--muted);
-  margin-top: 2px;
+.github-star-badge {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--magpie-fg-2, var(--text));
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.github-star-badge svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.github-star-badge .star-mark {
+  width: 11px;
+  height: 11px;
+  color: var(--warning);
+}
+
+.github-star-badge:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--card);
+}
+
+.github-star-badge:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .toolbar {
@@ -188,58 +228,10 @@ body {
   display: none !important;
 }
 
-.status-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: stretch;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--surface-radius);
-}
-
-.status-cell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-auto-rows: min-content;
-  gap: 2px 8px;
-  min-width: 0;
-  padding: 9px 14px;
-}
-
-.status-cell ~ .status-cell {
-  border-inline-start: 1px solid var(--border);
-}
-
-.status-label {
-  font-size: 11.5px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.status-email {
-  grid-column: 1 / -1;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 550;
-  overflow-wrap: anywhere;
-}
-
-.status-dot {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: center;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--muted);
-}
-
-.status-dot.is-online {
-  background: var(--success);
-}
-
-.status-divider {
-  display: none;
+.account-notice {
+  padding-inline: 2px;
+  color: var(--warning);
+  font-size: 12px;
 }
 
 .list-section {
@@ -274,14 +266,6 @@ body {
 
 .unavailable-accounts[open] > summary {
   border-bottom: 1px solid var(--border);
-}
-
-.quota-source {
-  order: 1;
-  align-self: flex-end;
-  padding-inline: 2px;
-  font-size: 12px;
-  color: var(--muted);
 }
 
 .quota-header,
@@ -337,15 +321,11 @@ body {
 }
 
 .account-row {
-  min-height: 72px;
+  min-height: 66px;
 }
 
 .account-row .btn:focus-visible {
   outline-offset: 2px;
-}
-
-.account-row.is-current {
-  background: color-mix(in srgb, var(--primary-soft) 42%, var(--card));
 }
 
 .account-main {
@@ -374,7 +354,11 @@ body {
   gap: 6px;
 }
 
-.account-updated,
+.account-issue {
+  color: var(--warning);
+  font-size: 12px;
+}
+
 .account-unavailable {
   color: var(--muted);
   font-size: 12px;
@@ -508,28 +492,7 @@ body {
   justify-self: end;
 }
 
-.hidden-footer {
-  text-align: center;
-  padding: 6px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.link-btn {
-  background: none;
-  border: none;
-  color: var(--primary);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 0 4px;
-}
-
-.link-btn:hover {
-  text-decoration: underline;
-}
-
 .btn:focus-visible,
-.link-btn:focus-visible,
 summary:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 3px;
@@ -616,15 +579,6 @@ summary:focus-visible {
     flex-wrap: wrap;
   }
 
-  .status-strip {
-    grid-template-columns: 1fr;
-  }
-
-  .status-cell ~ .status-cell {
-    border-inline-start: 0;
-    border-top: 1px solid var(--border);
-  }
-
   .account-row {
     grid-template-columns: minmax(0, 1fr);
     row-gap: 12px;
@@ -647,7 +601,8 @@ summary:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .btn {
+  .btn,
+  .github-star-badge {
     transition: none;
   }
 }

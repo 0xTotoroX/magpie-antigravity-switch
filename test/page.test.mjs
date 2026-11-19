@@ -26,31 +26,47 @@ function page(state) {
 }
 const baseState = () => ({ current: {}, counts: { pro: 0, free: 0, unknown: 0, ineligible: 0 }, accounts: [], preferences: { onlyPro: true } });
 
-test("#5 page shows old runtime and pending target, including a hidden-tier target", () => {
+function accountRow(html, email) {
+  return html.split('<div class="account-row">').find((row) => row.startsWith("\n") && row.includes(`class="account-email">${email}</span>`)) || "";
+}
+
+test("#5 page labels the running desktop and pending login on their own rows", () => {
   const state = baseState();
   state.current = { desktopEmail: "old@example.test", desktopSavedEmail: "next@example.test", desktopRunning: true, desktopPending: true };
-  state.accounts = [{ email: "next@example.test", pendingDesktop: true, hasCredentials: true, isEligible: true, isPro: false, tierLabel: "套餐未知" }];
-  const p = page(state);
-  assert.match(p.el("curDesktopEmail").textContent, /old@example.test → next@example.test（待生效）/);
-  assert.match(p.el("accountList").innerHTML, /桌面端待生效/);
-  assert.match(p.el("accountList").innerHTML, /应用桌面端/);
-  assert.doesNotMatch(p.el("accountList").innerHTML, /当前使用中/);
+  state.accounts = [
+    { email: "old@example.test", activeDesktop: true, hasCredentials: true, isEligible: true, isPaid: true },
+    { email: "next@example.test", pendingDesktop: true, activeCli: true, hasCredentials: true, isEligible: true, isPaid: false },
+    { email: "magpie@example.test", activeMagpieFirst: true, hasCredentials: true, isEligible: true, isPaid: false }
+  ];
+  state.recommendedEmail = "next@example.test";
+  const p = page(state), html = p.el("accountList").innerHTML;
+  assert.match(accountRow(html, "old@example.test"), /tag-active">桌面端</);
+  assert.match(accountRow(html, "next@example.test"), /tag-active">CLI</);
+  assert.match(accountRow(html, "next@example.test"), /tag-active">桌面端待生效</);
+  assert.match(accountRow(html, "next@example.test"), /应用桌面端/);
+  assert.doesNotMatch(accountRow(html, "next@example.test"), /tag-active">桌面端</);
+  assert.match(accountRow(html, "magpie@example.test"), /tag-active">Magpie 首选</);
+  assert.doesNotMatch(html, /当前使用中|推荐|is-current/);
 });
-test("#5 page shows unknown runtime identity and saved offline identity distinctly", () => {
+
+test("#5 page distinguishes unknown running identity from an offline saved login", () => {
   const state = baseState();
   state.current = { desktopRunning: true, desktopStatus: "unknown" };
   const p = page(state);
-  assert.equal(p.el("curDesktopEmail").textContent, "账号待确认");
-  p.render({ ...state, current: { desktopEmail: "saved@example.test", desktopSavedEmail: "saved@example.test", desktopStatus: "stopped" } });
-  assert.match(p.el("curDesktopEmail").textContent, /已保存，未运行/);
+  assert.equal(p.el("desktopNotice").classList.contains("hidden"), false);
+  p.render({ ...state, current: { desktopSavedEmail: "saved@example.test", desktopStatus: "stopped" },
+    accounts: [{ email: "saved@example.test", savedDesktop: true, isEligible: true }] });
+  const html = p.el("accountList").innerHTML;
+  assert.match(html, /tag-active">桌面端已保存</);
+  assert.doesNotMatch(html, /tag-active">桌面端</);
+  assert.equal(p.el("desktopNotice").classList.contains("hidden"), true);
 });
+
 test("the CLI-only control describes the shared login for recent local agy", () => {
   const state = baseState();
   state.current = { cliEmail: "old@example.test", cliUsesSharedLogin: true };
   state.accounts = [{ email: "next@example.test", isPaid: true, isEligible: true, hasCredentials: true }];
-  const p = page(state);
-  assert.equal(p.el("curCliEmail").title, "新启动的 CLI 使用钥匙串中的账号");
-  assert.match(p.el("accountList").innerHTML, /title="新启动的 CLI 和桌面端共用此登录"/);
+  assert.match(page(state).el("accountList").innerHTML, /title="新启动的 CLI 和桌面端共用此登录"/);
 });
 
 test("#8 page does not describe an unknown quota or plan as normal or free", () => {
@@ -59,7 +75,6 @@ test("#8 page does not describe an unknown quota or plan as normal or free", () 
   state.counts.unknown = 1;
   state.accounts = [{ email: "unknown@example.test", isEligible: true, hasCredentials: true, tierLabel: "套餐未知" }];
   const p = page(state);
-  assert.match(p.el("subtitleText").textContent, /套餐未知 1 个/);
   assert.match(p.el("accountList").innerHTML, /套餐未知/);
   assert.match(p.el("accountList").innerHTML, /GPT \/ Claude 5h：未知/);
   assert.doesNotMatch(p.el("accountList").innerHTML, /配额正常/);
@@ -84,12 +99,13 @@ test("member filtering includes Ultra and Enterprise and preserves every plan la
   state.accounts.push({ email: "free@example.test", tierLabel: "Starter", isPaid: false, isEligible: true });
   state.accounts.push({ email: "unknown@example.test", tierLabel: "Unrecognized plan", isPaid: false, isEligible: true });
   const p = page(state);
-  assert.match(p.el("subtitleText").textContent, /会员 4 个/);
-  assert.doesNotMatch(p.el("subtitleText").textContent, /Pro 会员/);
   const rows = p.el("accountList").innerHTML;
   for (const plan of ["Google AI Pro", "Google AI Ultra (5x)", "Google AI Ultra (20x)", "Enterprise"]) assert(rows.includes(plan));
   assert.doesNotMatch(rows, /free@example.test|unknown@example.test/);
-  assert.match(p.el("hiddenFooter").innerHTML, /免费或套餐未知/);
+  assert.equal(p.el("btnTogglePro").textContent, "显示全部");
+  p.render({ ...state, preferences: { onlyPro: false } });
+  assert.match(p.el("accountList").innerHTML, /free@example.test/);
+  assert.equal(p.el("btnTogglePro").textContent, "隐藏非会员");
 });
 
 test("quota columns stay in model/window order regardless of input order", () => {

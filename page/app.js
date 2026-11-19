@@ -1,6 +1,6 @@
 /**
  * [INPUT]: state.js 的账号快照与 Magpie 页面桥接。
- * [OUTPUT]: 按账号类型分组的 Magpie 五窗口额度、原始档位、登录状态与用户操作指令。
+ * [OUTPUT]: 按账号类型分组的 Magpie 五窗口额度、原始档位、行内登录状态与用户操作指令。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -88,14 +88,6 @@
     return `${minutes}分后重置`;
   }
 
-  function quotaUpdatedLabel(quota) {
-    const at = quota?.updatedAt;
-    if (!at) return "未获取 Magpie 配额";
-    const date = new Date(at);
-    if (!Number.isFinite(date.getTime())) return "更新时间未知";
-    return `${date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })} 更新`;
-  }
-
   function renderQuotaCell(group, window, pools) {
     const reading = pools.find((p) => p.pool === group.pool && p.window === window);
     const period = periodLabel(window);
@@ -137,27 +129,20 @@
       </div>`).join("")}</div><span class="actions-heading">操作</span></div>`;
   }
 
-  function renderAccountRow(account, recommendedEmail) {
+  function renderAccountRow(account) {
     const isCurrentAll = account.activeDesktop && account.activeCli && account.savedDesktop;
-    const isRecommended = account.email === recommendedEmail && !account.activeDesktop;
+    const desktopSavedOffline = account.savedDesktop && currentState?.current?.desktopStatus === "stopped";
+    const statusTags = [
+      account.activeDesktop ? "桌面端" : desktopSavedOffline ? "桌面端已保存" : null,
+      account.activeCli ? "CLI" : null,
+      account.activeMagpieFirst ? "Magpie 首选" : null,
+      account.pendingDesktop ? "桌面端待生效" : null
+    ].filter(Boolean).map((label) => `<span class="tag tag-active">${label}</span>`).join("");
 
     const isPaid = account.isPaid ?? account.isPro;
     const tierClass = !account.isEligible ? "tag-bad" : isPaid ? "tag-pro" : account.isFree ? "tag-free" : "tag-unknown";
-    const tags = [
-      `<span class="tag ${tierClass}">${escapeHtml(account.tierLabel || account.plan || (isPaid ? "会员" : "套餐未知"))}</span>`
-    ];
-
-    if (isCurrentAll) {
-      tags.push(`<span class="tag tag-active">当前使用中</span>`);
-    } else {
-      if (account.activeDesktop) tags.push(`<span class="tag tag-active">桌面端</span>`);
-      if (account.activeCli) tags.push(`<span class="tag tag-active">CLI</span>`);
-    }
-    if (account.pendingDesktop) tags.push(`<span class="tag tag-active">桌面端待生效</span>`);
-
-    if (isRecommended) {
-      tags.push(`<span class="tag tag-pro">推荐</span>`);
-    }
+    const tierLabel = account.tierLabel || account.plan || (isPaid ? "会员" : "套餐未知");
+    const quotaIssue = account.isEligible && (account.quota?.error || account.quota?.refreshError);
 
     const canSwitch = account.hasCredentials && account.isEligible;
     const disabled = isBusy || Boolean(currentState?.error);
@@ -183,18 +168,17 @@
           </button>
         `;
       }
-    } else {
-      actionButtons = `<span class="subtitle">不可用</span>`;
     }
 
     return `
-      <div class="account-row ${account.activeDesktop ? "is-current" : ""}">
+      <div class="account-row">
         <div class="account-main">
           <div class="account-title-line">
             <span class="account-email">${escapeHtml(account.email)}</span>
+            ${statusTags}
           </div>
-          <div class="account-tags">${tags.join("")}</div>
-          ${account.isEligible ? `<span class="account-updated">${account.quota?.error ? "Magpie 配额读取失败" : escapeHtml(quotaUpdatedLabel(account.quota))}</span>` : ""}
+          <div class="account-tags"><span class="tag ${tierClass}">${escapeHtml(tierLabel)}</span></div>
+          ${quotaIssue ? `<span class="account-issue">${escapeHtml(quotaIssue)}</span>` : ""}
         </div>
         ${renderQuotaGrid(account)}
         <div class="account-actions">
@@ -204,7 +188,7 @@
     `;
   }
 
-  function renderAccountGroups(accounts, recommendedEmail) {
+  function renderAccountGroups(accounts) {
     const groups = [
       { label: "会员账号", matches: (a) => a.isEligible && (a.isPaid ?? a.isPro) },
       { label: "免费账号", matches: (a) => a.isEligible && !(a.isPaid ?? a.isPro) && a.isFree },
@@ -215,7 +199,7 @@
       const rows = accounts.filter(group.matches);
       return rows.length ? `<section class="account-group" aria-label="${group.label}">
         <h2>${group.label}<span>${rows.length}</span></h2>
-        ${rows.map((account) => renderAccountRow(account, recommendedEmail)).join("")}
+        ${rows.map(renderAccountRow).join("")}
       </section>` : "";
     }).join("");
   }
@@ -229,18 +213,15 @@
     else if (hadStateError) document.getElementById("toastBanner")?.classList.add("hidden");
 
     const cur = state.current || {};
-    const counts = state.counts || { pro: 0, free: 0, ineligible: 0 };
     const onlyPro = Boolean(state.preferences?.onlyPro);
 
-    const subtitleEl = document.getElementById("subtitleText");
-    if (subtitleEl) {
-      subtitleEl.textContent = `会员 ${counts.paid ?? counts.pro ?? 0} 个 · 免费版 ${counts.free} 个${counts.unknown ? ` · 套餐未知 ${counts.unknown} 个` : ""}${counts.ineligible ? ` · 不可用 ${counts.ineligible} 个` : ""}`;
-    }
+    const desktopNotice = document.getElementById("desktopNotice");
+    desktopNotice?.classList.toggle("hidden", Boolean(state.error) || cur.desktopStatus !== "unknown");
 
     const btnTogglePro = document.getElementById("btnTogglePro");
     if (btnTogglePro) {
       btnTogglePro.classList.toggle("is-active", onlyPro);
-      btnTogglePro.textContent = onlyPro ? "已隐藏非会员" : "隐藏非会员";
+      btnTogglePro.textContent = onlyPro ? "显示全部" : "隐藏非会员";
       btnTogglePro.disabled = unavailable;
     }
 
@@ -250,58 +231,23 @@
     const btnRefresh = document.getElementById("btnRefresh");
     if (btnRefresh) btnRefresh.disabled = isBusy;
 
-    const desktopEmailEl = document.getElementById("curDesktopEmail");
-    if (desktopEmailEl) {
-      const account = cur.desktopEmail || (cur.desktopRunning ? "账号待确认" : "未登录");
-      desktopEmailEl.textContent = cur.desktopPending
-        ? `${account} → ${cur.desktopSavedEmail}（待生效）`
-        : `${account}${cur.desktopStatus === "stopped" && cur.desktopSavedEmail ? "（已保存，未运行）" : ""}`;
-      desktopEmailEl.title = desktopEmailEl.textContent;
-    }
-
-    const desktopDotEl = document.getElementById("curDesktopDot");
-    if (desktopDotEl) {
-      desktopDotEl.className = `status-dot ${cur.desktopRunning ? "is-online" : ""}`;
-      desktopDotEl.title = cur.desktopRunning ? "Antigravity 桌面端运行中" : "Antigravity 桌面端未运行";
-    }
-
-    const cliEmailEl = document.getElementById("curCliEmail");
-    if (cliEmailEl) {
-      cliEmailEl.textContent = cur.cliEmail || "未登录";
-      cliEmailEl.title = cur.cliUsesSharedLogin ? "新启动的 CLI 使用钥匙串中的账号" : "";
-    }
-
-    const magpieEmailEl = document.getElementById("curMagpieEmail");
-    if (magpieEmailEl) magpieEmailEl.textContent = cur.magpieFirstEmail || "未设置";
-
     const allAccounts = Array.isArray(state.accounts) ? state.accounts : [];
     const visibleAccounts = allAccounts.filter((acc) => {
-      if (acc.activeDesktop || acc.pendingDesktop) return true;
+      if (acc.activeDesktop || acc.pendingDesktop || acc.activeCli || acc.activeMagpieFirst ||
+          (cur.desktopStatus === "stopped" && acc.savedDesktop)) return true;
       if (!acc.isEligible) return false;
       if (onlyPro && !(acc.isPaid ?? acc.isPro)) return false;
       return true;
     });
 
-    const hiddenCount = allAccounts.filter((a) => a.isEligible && !visibleAccounts.includes(a)).length;
     const inactiveAccounts = allAccounts.filter((a) => !a.isEligible && !visibleAccounts.includes(a));
 
     const listEl = document.getElementById("accountList");
     if (listEl) {
       if (visibleAccounts.length === 0) {
-        listEl.innerHTML = `<div class="account-empty-state">未发现可用账号或已按筛选规则全部隐藏</div>`;
+        listEl.innerHTML = `<div class="account-empty-state">${onlyPro ? "没有会员账号" : "没有可用账号"}</div>`;
       } else {
-        listEl.innerHTML = renderAccountGroups(visibleAccounts, state.recommendedEmail);
-      }
-    }
-
-    const footerEl = document.getElementById("hiddenFooter");
-    if (footerEl) {
-      if (hiddenCount > 0) {
-        footerEl.classList.remove("hidden");
-        footerEl.innerHTML = `已隐藏 ${hiddenCount} 个免费或套餐未知账号 · <button type="button" class="link-btn" id="btnShowHidden">显示全部</button>`;
-      } else {
-        footerEl.classList.add("hidden");
-        footerEl.innerHTML = "";
+        listEl.innerHTML = renderAccountGroups(visibleAccounts);
       }
     }
 
@@ -310,7 +256,7 @@
       inactiveEl.hidden = inactiveAccounts.length === 0;
       document.getElementById("unavailableSummary").textContent = `不可用账号 · ${inactiveAccounts.length}`;
       document.getElementById("unavailableList").innerHTML = inactiveAccounts
-        .map((a) => renderAccountRow(a, state.recommendedEmail)).join("");
+        .map(renderAccountRow).join("");
     }
 
     const incomingSwitchId = state.lastSwitch?.cmdId || state.lastSwitch?.id || null;
@@ -399,14 +345,6 @@
 
     if (target.closest("#btnRefresh")) {
       sendPluginCommand({ type: "refresh" });
-      return;
-    }
-
-    if (target.closest("#btnShowHidden")) {
-      sendPluginCommand({
-        type: "set-preferences",
-        preferences: { onlyPro: false }
-      });
       return;
     }
 

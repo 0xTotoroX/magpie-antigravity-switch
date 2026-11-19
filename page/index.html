@@ -12,16 +12,15 @@
       <header class="topbar">
         <div class="title-block">
           <h1>Antigravity Switch</h1>
-          <p class="subtitle" id="subtitleText">正在读取账号状态…</p>
         </div>
         <div class="toolbar">
-          <button type="button" class="btn btn-filter" id="btnTogglePro" title="仅显示已识别的会员账号">
+          <button type="button" class="btn btn-filter" id="btnTogglePro">
             隐藏非会员
           </button>
           <button type="button" class="btn" id="btnOrganize" title="自动纳管已识别会员账号、停用异常账号并置顶会员">
             整理账号
           </button>
-          <button type="button" class="btn btn-ghost" id="btnRefresh" title="重新读取 Magpie 配额缓存与本地登录状态">
+          <button type="button" class="btn btn-ghost" id="btnRefresh">
             刷新
           </button>
         </div>
@@ -29,30 +28,12 @@
 
       <div class="toast hidden" id="toastBanner"></div>
 
-      <section class="status-strip" id="statusStrip">
-        <div class="status-cell">
-          <span class="status-label">桌面端</span>
-          <span class="status-email" id="curDesktopEmail">-</span>
-          <span class="status-dot" id="curDesktopDot"></span>
-        </div>
-        <div class="status-divider"></div>
-        <div class="status-cell">
-          <span class="status-label">CLI (agy)</span>
-          <span class="status-email" id="curCliEmail">-</span>
-        </div>
-        <div class="status-divider"></div>
-        <div class="status-cell">
-          <span class="status-label">Magpie 首选</span>
-          <span class="status-email" id="curMagpieEmail">-</span>
-        </div>
-      </section>
+      <p class="account-notice hidden" id="desktopNotice" role="status">桌面端账号待确认</p>
 
       <section class="list-section">
-        <p class="quota-source">额度来自 Magpie</p>
         <div class="account-list" id="accountList">
-          <div class="account-empty-state">正在读取 Magpie 配额与本地登录状态…</div>
+          <div class="account-empty-state">正在读取账号…</div>
         </div>
-        <div class="hidden-footer hidden" id="hiddenFooter"></div>
         <details class="unavailable-accounts" id="unavailableAccounts" hidden>
           <summary id="unavailableSummary">不可用账号</summary>
           <div class="account-list" id="unavailableList"></div>
