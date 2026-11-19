@@ -1,6 +1,6 @@
 /**
- * [INPUT]: state.js 的账号快照与 Magpie 页面桥接。
- * [OUTPUT]: 按账号类型分组的 Magpie 五窗口额度、原始档位、行内登录状态与用户操作指令。
+ * [INPUT]: state.js 账号快照、i18n.js 文案与 Magpie 页面桥接。
+ * [OUTPUT]: 按账号类型分组的 Magpie 模型额度、原始档位、行内登录状态与额度刷新。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -12,9 +12,16 @@
     { pool: "Gemini 4 Argon", label: "Gemini 4 Argon", windows: ["7 days"] }
   ];
 
+  const CARBON_GROUP = { pool: "Gemini 4 Carbon", label: "Gemini 4 Carbon", windows: ["5 hours", "7 days"] };
+
+  const i18n = globalThis.agySwitchI18n;
+  const t = i18n.text;
+
   let currentState = globalThis.__AGY_SWITCH_STATE__ || null;
   let lastHandledSwitchId = currentState?.lastSwitch?.cmdId || currentState?.lastSwitch?.id || null;
   let isBusy = false;
+  let isRefreshing = false;
+  let lastToast = "";
 
   async function ensureMagpieBridge() {
     if (globalThis.magpie?.options?.set || typeof globalThis.magpie?.saveOptions === "function") {
@@ -65,8 +72,8 @@
   function showToast(message, isOk = true) {
     const el = document.getElementById("toastBanner");
     if (!el || !message) return;
-    const clean = String(message).slice(0, 180);
-    el.textContent = clean;
+    lastToast = message;
+    el.textContent = i18n.backend(message).slice(0, 180);
     el.className = `toast ${isOk ? "is-ok" : "is-error"}`;
   }
 
@@ -83,9 +90,7 @@
   function resetLabel(resetsAt) {
     const minutes = Math.ceil((Date.parse(resetsAt) - Date.now()) / 60000);
     if (!Number.isFinite(minutes) || minutes <= 0) return "";
-    if (minutes >= 1440) return `${Math.floor(minutes / 1440)}天后重置`;
-    if (minutes >= 60) return `${Math.floor(minutes / 60)}小时后重置`;
-    return `${minutes}分后重置`;
+    return i18n.reset(minutes);
   }
 
   function renderQuotaCell(group, window, pools) {
@@ -96,23 +101,31 @@
     const stale = Boolean(reading?.stale || expired);
     const known = Number.isFinite(reading?.remaining) && !stale;
     const remaining = known ? Math.max(0, Math.min(100, Math.round(reading.remaining))) : 0;
-    const value = known ? `${remaining}%` : stale ? "待刷新" : "未知";
+    const value = known ? `${remaining}%` : stale ? t("quotaWait") : t("unknown");
     const label = `${group.label} ${period}`;
     return `<div class="quota-cell ${known ? fillClass(remaining) : "is-unknown"}" data-pool="${group.pool}" data-window="${window}">
       <span class="quota-period">${period}</span>
-      <strong class="quota-value" aria-label="${label}：${value}">${value}</strong>
-      <span class="quota-bar" ${known ? `role="progressbar" aria-label="${label} 剩余" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${remaining}"` : 'aria-hidden="true"'}>
+      <strong class="quota-value" aria-label="${label}${i18n.separator()}${value}">${value}</strong>
+      <span class="quota-bar" ${known ? `role="progressbar" aria-label="${label} ${t("remaining")}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${remaining}"` : 'aria-hidden="true"'}>
         <span class="quota-fill" style="width:${known ? remaining : 0}%"></span>
       </span>
-      <span class="quota-reset" title="${known && Number.isFinite(resetAt) ? escapeHtml(`重置时间：${new Date(resetAt).toLocaleString("zh-CN")}`) : ""}">${known ? resetLabel(reading.resetsAt) : ""}</span>
+      <span class="quota-reset" title="${known && Number.isFinite(resetAt) ? escapeHtml(`${t("resetTime")}${i18n.separator()}${new Date(resetAt).toLocaleString(i18n.locale())}`) : ""}">${known ? resetLabel(reading.resetsAt) : ""}</span>
     </div>`;
   }
 
-  function renderQuotaGrid(account) {
-    if (!account.isEligible) return `<div class="account-unavailable">账号需验证或地区受限</div>`;
+  function quotaGridAttributes(quotaGroups) {
+    const carbon = quotaGroups.find((group) => group.pool === CARBON_GROUP.pool);
+    if (!carbon) return 'class="account-quotas"';
+    return `class="account-quotas has-carbon" style="--carbon-width: ${carbon.windows.length}fr"`;
+  }
+
+  function renderQuotaGrid(account, quotaGroups) {
+    if (!account.isEligible) {
+      return `<div class="account-unavailable">${escapeHtml(i18n.backend(account.ineligibleReason) || t("verifyAccount"))}</div>`;
+    }
     const pools = account.quota?.error ? [] : account.quota?.pools || [];
-    return `<div class="account-quotas" aria-label="Magpie 配额">
-      ${QUOTA_GROUPS.map((group) => `<div class="quota-group">
+    return `<div ${quotaGridAttributes(quotaGroups)} aria-label="${t("quota")}">
+      ${quotaGroups.map((group) => `<div class="quota-group">
         <span class="quota-group-label">${group.label}</span>
         <div class="quota-windows ${group.windows.length === 1 ? "is-single" : ""}">
           ${group.windows.map((window) => renderQuotaCell(group, window, pools)).join("")}
@@ -121,50 +134,52 @@
     </div>`;
   }
 
-  function renderQuotaHeader() {
-    return `<div class="quota-header" aria-hidden="true"><span>账号</span>
-      <div class="account-quotas">${QUOTA_GROUPS.map((group) => `<div class="quota-group">
+  function renderQuotaHeader(quotaGroups) {
+    return `<div class="quota-header" aria-hidden="true"><span>${t("account")}</span>
+      <div ${quotaGridAttributes(quotaGroups)}>${quotaGroups.map((group) => `<div class="quota-group">
         <strong>${group.label}</strong>
         <div class="quota-windows ${group.windows.length === 1 ? "is-single" : ""}">${group.windows.map((window) => `<span>${periodLabel(window)}</span>`).join("")}</div>
-      </div>`).join("")}</div><span class="actions-heading">操作</span></div>`;
+      </div>`).join("")}</div><span class="actions-heading">${t("actions")}</span></div>`;
   }
 
-  function renderAccountRow(account) {
+  function renderAccountRow(account, quotaGroups = QUOTA_GROUPS) {
     const isCurrentAll = account.activeDesktop && account.activeCli && account.savedDesktop;
     const desktopSavedOffline = account.savedDesktop && currentState?.current?.desktopStatus === "stopped";
     const statusTags = [
-      account.activeDesktop ? "桌面端" : desktopSavedOffline ? "桌面端已保存" : null,
+      account.activeDesktop ? t("desktop") : desktopSavedOffline ? t("desktopSaved") : null,
       account.activeCli ? "CLI" : null,
-      account.activeMagpieFirst ? "Magpie 首选" : null,
-      account.pendingDesktop ? "桌面端待生效" : null
+      account.activeMagpieFirst ? t("magpiePreferred") : null,
+      account.pendingDesktop ? t("desktopPending") : null
     ].filter(Boolean).map((label) => `<span class="tag tag-active">${label}</span>`).join("");
 
     const isPaid = account.isPaid ?? account.isPro;
     const tierClass = !account.isEligible ? "tag-bad" : isPaid ? "tag-pro" : account.isFree ? "tag-free" : "tag-unknown";
-    const tierLabel = account.tierLabel || account.plan || (isPaid ? "会员" : "套餐未知");
+    const tierLabel = account.isEligible && account.plan
+      ? account.plan
+      : i18n.stateLabel(account.tierLabel) || t(isPaid ? "member" : "planUnknown");
     const quotaIssue = account.isEligible && (account.quota?.error || account.quota?.refreshError);
 
     const canSwitch = account.hasCredentials && account.isEligible;
     const disabled = isBusy || Boolean(currentState?.error);
     const cliSwitchHint = currentState?.current?.cliUsesSharedLogin
-      ? "新启动的 CLI 和桌面端共用此登录"
-      : "供新启动的 CLI 使用";
+      ? t("cliShared")
+      : t("cliNext");
 
     let actionButtons = "";
     if (canSwitch) {
       if (isCurrentAll || account.pendingDesktop) {
         actionButtons = `
           <button type="button" class="btn btn-ghost" data-action="reload-desktop" ${disabled ? "disabled" : ""}>
-            ${account.pendingDesktop ? "应用桌面端" : "刷新窗口"}
+            ${t(account.pendingDesktop ? "activateDesktop" : "refreshDesktop")}
           </button>
         `;
       } else {
         actionButtons = `
           <button type="button" class="btn btn-primary" data-action="switch-all" data-email="${escapeHtml(account.email)}" ${disabled ? "disabled" : ""}>
-            切换
+            ${t("switch")}
           </button>
           <button type="button" class="btn btn-ghost" data-action="switch-cli" data-email="${escapeHtml(account.email)}" title="${cliSwitchHint}" ${disabled ? "disabled" : ""}>
-            仅 CLI
+            ${t("cliOnly")}
           </button>
         `;
       }
@@ -178,9 +193,9 @@
             ${statusTags}
           </div>
           <div class="account-tags"><span class="tag ${tierClass}">${escapeHtml(tierLabel)}</span></div>
-          ${quotaIssue ? `<span class="account-issue">${escapeHtml(quotaIssue)}</span>` : ""}
+          ${quotaIssue ? `<span class="account-issue">${escapeHtml(i18n.backend(quotaIssue))}</span>` : ""}
         </div>
-        ${renderQuotaGrid(account)}
+        ${renderQuotaGrid(account, quotaGroups)}
         <div class="account-actions">
           ${actionButtons}
         </div>
@@ -189,17 +204,23 @@
   }
 
   function renderAccountGroups(accounts) {
+    const carbonWindows = CARBON_GROUP.windows.filter((window) => accounts.some(({ quota }) =>
+      !quota?.error && quota?.pools?.some((pool) =>
+        pool.pool === CARBON_GROUP.pool && pool.window === window && Number.isFinite(pool.remaining))));
+    const quotaGroups = carbonWindows.length
+      ? [...QUOTA_GROUPS, { ...CARBON_GROUP, windows: carbonWindows }]
+      : QUOTA_GROUPS;
     const groups = [
-      { label: "会员账号", matches: (a) => a.isEligible && (a.isPaid ?? a.isPro) },
-      { label: "免费账号", matches: (a) => a.isEligible && !(a.isPaid ?? a.isPro) && a.isFree },
-      { label: "套餐未知", matches: (a) => a.isEligible && !(a.isPaid ?? a.isPro) && !a.isFree },
-      { label: "不可用账号", matches: (a) => !a.isEligible }
+      { label: t("members"), matches: (a) => a.isEligible && (a.isPaid ?? a.isPro) },
+      { label: t("freeAccounts"), matches: (a) => a.isEligible && !(a.isPaid ?? a.isPro) && a.isFree },
+      { label: t("planUnknown"), matches: (a) => a.isEligible && !(a.isPaid ?? a.isPro) && !a.isFree },
+      { label: t("unavailableAccounts"), matches: (a) => !a.isEligible }
     ];
-    return renderQuotaHeader() + groups.map((group) => {
+    return renderQuotaHeader(quotaGroups) + groups.map((group) => {
       const rows = accounts.filter(group.matches);
       return rows.length ? `<section class="account-group" aria-label="${group.label}">
         <h2>${group.label}<span>${rows.length}</span></h2>
-        ${rows.map(renderAccountRow).join("")}
+        ${rows.map((account) => renderAccountRow(account, quotaGroups)).join("")}
       </section>` : "";
     }).join("");
   }
@@ -208,44 +229,28 @@
     if (!state) return;
     const hadStateError = Boolean(currentState?.error);
     currentState = state;
-    const unavailable = isBusy || Boolean(state.error);
     if (state.error) showToast(state.error, false);
     else if (hadStateError) document.getElementById("toastBanner")?.classList.add("hidden");
 
     const cur = state.current || {};
-    const onlyPro = Boolean(state.preferences?.onlyPro);
 
     const desktopNotice = document.getElementById("desktopNotice");
     desktopNotice?.classList.toggle("hidden", Boolean(state.error) || cur.desktopStatus !== "unknown");
 
-    const btnTogglePro = document.getElementById("btnTogglePro");
-    if (btnTogglePro) {
-      btnTogglePro.classList.toggle("is-active", onlyPro);
-      btnTogglePro.textContent = onlyPro ? "显示全部" : "隐藏非会员";
-      btnTogglePro.disabled = unavailable;
+    const btnRefresh = document.getElementById("btnRefresh");
+    if (btnRefresh) {
+      btnRefresh.disabled = isBusy;
+      btnRefresh.textContent = t(isRefreshing ? "refreshing" : "refresh");
     }
 
-    const btnOrganize = document.getElementById("btnOrganize");
-    if (btnOrganize) btnOrganize.disabled = unavailable;
-
-    const btnRefresh = document.getElementById("btnRefresh");
-    if (btnRefresh) btnRefresh.disabled = isBusy;
-
     const allAccounts = Array.isArray(state.accounts) ? state.accounts : [];
-    const visibleAccounts = allAccounts.filter((acc) => {
-      if (acc.activeDesktop || acc.pendingDesktop || acc.activeCli || acc.activeMagpieFirst ||
-          (cur.desktopStatus === "stopped" && acc.savedDesktop)) return true;
-      if (!acc.isEligible) return false;
-      if (onlyPro && !(acc.isPaid ?? acc.isPro)) return false;
-      return true;
-    });
-
-    const inactiveAccounts = allAccounts.filter((a) => !a.isEligible && !visibleAccounts.includes(a));
+    const visibleAccounts = allAccounts.filter((account) => account.isEligible);
+    const inactiveAccounts = allAccounts.filter((account) => !account.isEligible);
 
     const listEl = document.getElementById("accountList");
     if (listEl) {
       if (visibleAccounts.length === 0) {
-        listEl.innerHTML = `<div class="account-empty-state">${onlyPro ? "没有会员账号" : "没有可用账号"}</div>`;
+        listEl.innerHTML = `<div class="account-empty-state">${t(allAccounts.length ? "noAvailable" : "noAccounts")}</div>`;
       } else {
         listEl.innerHTML = renderAccountGroups(visibleAccounts);
       }
@@ -254,9 +259,9 @@
     const inactiveEl = document.getElementById("unavailableAccounts");
     if (inactiveEl) {
       inactiveEl.hidden = inactiveAccounts.length === 0;
-      document.getElementById("unavailableSummary").textContent = `不可用账号 · ${inactiveAccounts.length}`;
+      document.getElementById("unavailableSummary").textContent = `${t("unavailableAccounts")} · ${inactiveAccounts.length}`;
       document.getElementById("unavailableList").innerHTML = inactiveAccounts
-        .map(renderAccountRow).join("");
+        .map((account) => renderAccountRow(account)).join("");
     }
 
     const incomingSwitchId = state.lastSwitch?.cmdId || state.lastSwitch?.id || null;
@@ -288,9 +293,10 @@
 
   async function sendPluginCommand(cmdPayload) {
     const cmdId = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const fullCmd = { ...cmdPayload, id: cmdId, ts: Date.now() };
+    const fullCmd = { ...cmdPayload, id: cmdId, ts: Date.now(), language: i18n.locale() };
 
     isBusy = true;
+    isRefreshing = cmdPayload.type === "refresh";
     render(currentState);
 
     try {
@@ -300,14 +306,20 @@
       } else if (typeof bridge?.saveOptions === "function") {
         await bridge.saveOptions(PLUGIN_NAME, { cmd: fullCmd });
       } else {
-        showToast("未检测到 Magpie 页面桥接，请通过 Magpie 侧边栏打开", false);
+        const noBridgeMsg = cmdPayload.type === "open-github"
+           ? "https://github.com/0xTotoroX/magpie-antigravity-switch"
+          : t("noBridge");
         isBusy = false;
         render(currentState);
+        showToast(noBridgeMsg, cmdPayload.type === "open-github");
         return;
       }
 
-      for (let i = 0; i < 18; i++) {
-        await new Promise((r) => setTimeout(r, 250));
+      const waitMs = isRefreshing ? 180_000 : 10_000;
+      const pollMs = isRefreshing ? 1_000 : 250;
+      const deadline = Date.now() + waitMs;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, pollMs));
         await pollStateScript();
         if (lastHandledSwitchId === cmdId) {
           isBusy = false;
@@ -315,10 +327,12 @@
           return;
         }
       }
+      if (isRefreshing) showToast(t("refreshTimeout"), false);
     } catch (err) {
-      showToast(`指令发送失败: ${err.message || err}`, false);
+      showToast(`${t("commandFailed")}${i18n.separator()}${err.message || err}`, false);
     } finally {
       isBusy = false;
+      isRefreshing = false;
       render(currentState);
     }
   }
@@ -327,19 +341,10 @@
     const target = ev.target instanceof Element ? ev.target : null;
     if (!target) return;
 
-    if (target.closest("#btnTogglePro")) {
-      const nextOnlyPro = !Boolean(currentState?.preferences?.onlyPro);
-      sendPluginCommand({
-        type: "set-preferences",
-        preferences: { onlyPro: nextOnlyPro }
-      });
-      return;
-    }
-
-    if (target.closest("#btnOrganize")) {
-      sendPluginCommand({
-        type: "organize"
-      });
+    if (target.closest("#btnGitHubStar")) {
+      if (!isBusy) {
+        sendPluginCommand({ type: "open-github" });
+      }
       return;
     }
 
@@ -380,6 +385,21 @@
   globalThis.__AGY_SWITCH_ON_STATE__ = (newState) => {
     render(newState);
   };
+
+  function applyLanguage(value) {
+    if (!value || !i18n.setLanguage(value)) return;
+    i18n.apply();
+    render(currentState);
+    const toast = document.getElementById("toastBanner");
+    if (lastToast && toast && !toast.classList.contains("hidden")) {
+      toast.textContent = i18n.backend(lastToast).slice(0, 180);
+    }
+  }
+
+  const magpie = globalThis.magpie;
+  applyLanguage(magpie?.theme?.lang || globalThis.navigator?.language);
+  magpie?.onTheme?.((theme) => applyLanguage(theme?.lang));
+  magpie?.ready?.then((theme) => applyLanguage(theme?.lang)).catch(() => {});
 
   if (currentState) {
     render(currentState);

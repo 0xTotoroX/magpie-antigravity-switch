@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { fixture, auth, login, live, quota } from "./fixture.mjs";
+import { fixture, auth, login, live, quota, future } from "./fixture.mjs";
 
 test("#1 new Keychain item has restricted ACL and never deletes", async () => {
   const f = await fixture({ desktopInstalled: true });
@@ -378,4 +378,327 @@ test("member-only preferences keep the old storage key without a Pro-only label"
   assert.equal(result.state.preferences.onlyPro, true);
   assert.match(result.message, /仅显示已识别会员/);
   assert.doesNotMatch(result.message, /Pro 会员/);
+});
+
+test("plugin:agy-cli reads multi-account isolated homes, agy-cli quota windows and keeps missing plan eligible", async () => {
+  const isoEmail = "isolated@example.test";
+  const defEmail = "default@example.test";
+  const f = await fixture({ keychain: auth(defEmail) });
+  f.write(f.core.PATHS.loginsJson, [
+    { agent: "plugin:agy-cli", home: "agy-cli#slot1", user: isoEmail, on: true },
+    { agent: "plugin:agy-cli", home: "agy-cli", user: defEmail, on: true },
+    { agent: "plugin:antigravity-bridge", home: "antigravity-bridge", user: "API key", on: true }
+  ]);
+  f.write(f.core.PATHS.pluginAuthJson, {
+    "agy-cli#slot1": { type: "api", key: "k1", metadata: { email: isoEmail, agyHome: "abcd1234ef567890" } },
+    "agy-cli": { type: "api", key: "k2", metadata: { email: defEmail } },
+    "antigravity-bridge": { type: "api", key: "bridge-key" }
+  });
+  f.write("/fixture-only/.local/state/magpie-agy-bridge/accounts/abcd1234ef567890/.gemini/antigravity-cli/antigravity-oauth-token", {
+    id_token_email: isoEmail,
+    auth_method: "consumer",
+    token: { access_token: "iso-access", refresh_token: "1//iso-refresh", expiry: future() }
+  });
+  f.write(f.core.PATHS.quotasJson, {
+    [`agy-cli/${isoEmail}`]: {
+      at: new Date().toISOString(),
+      quota: {
+        provider: "agy-cli",
+        user: isoEmail,
+        windows: [
+          { name: "Gemini · 7 days", used: 12.5, remaining: 87.5, resetsAt: future() },
+          { name: "Claude & GPT · 7 days", used: 0, remaining: 100, resetsAt: future() }
+        ]
+      }
+    }
+  });
+
+  const state = f.core.getFullState();
+  const iso = state.accounts.find((a) => a.email === isoEmail);
+  const def = state.accounts.find((a) => a.email === defEmail);
+  assert.equal(state.accounts.some((a) => a.email === "API key"), false);
+  assert.equal(iso.isEligible, true);
+  assert.equal(iso.plan, null);
+  assert.equal(iso.tierLabel, "套餐未知");
+  assert.equal(iso.agyCliMode, "isolated");
+  assert.equal(iso.hasCredentials, true);
+  assert.equal(iso.quotaProvider, "agy-cli");
+  assert.deepEqual(
+    Array.from(iso.quota.pools, (p) => [p.pool, p.window, p.remaining]),
+    [
+      ["Claude & GPT", "7 days", 100],
+      ["Gemini", "7 days", 87.5]
+    ]
+  );
+  assert.equal(def.isEligible, true);
+  assert.equal(def.agyCliMode, "default");
+  assert.equal(def.hasCredentials, true);
+
+  const switched = f.core.switchAccount({ email: isoEmail, target: "all" });
+  assert.equal(switched.ok, true);
+  assert.equal(f.keychain().id_token_email, isoEmail);
+  assert.equal(f.keychain().token.refresh_token, "1//iso-refresh");
+  assert.equal(f.read(f.core.PATHS.cliToken).id_token_email, isoEmail);
+  assert.equal(f.read(f.core.PATHS.loginsJson).find((item) => item.user === isoEmail).first, true);
+  assert.equal(f.read(f.core.PATHS.loginsJson).find((item) => item.user === "API key").first, undefined);
+
+  const organized = f.core.organizeAccounts();
+  assert.equal(organized.ok, true);
+  const loginsAfter = f.read(f.core.PATHS.loginsJson);
+  assert.equal(loginsAfter.filter((item) => item.user === isoEmail).length, 1);
+  assert.equal(loginsAfter.find((item) => item.user === isoEmail).on, true);
+});
+
+test("plugin:antigravity and plugin:agy-cli merge per email, strip piped project in oauth refresh and retain fresher quota", async () => {
+  const email = "dual@example.test";
+  const oldAt = new Date(Date.now() - 86_400_000).toISOString();
+  const newAt = new Date().toISOString();
+  const futureAgyMs = Date.now() + 7_200_000;
+  const f = await fixture();
+  f.write(f.core.PATHS.loginsJson, [
+    { agent: "plugin:agy-cli", home: "agy-cli#abc123", user: email, on: true },
+    { agent: "plugin:antigravity", home: "antigravity#def456", user: email, plan: "Google AI Pro", on: true }
+  ]);
+  f.write(f.core.PATHS.pluginAuthJson, {
+    "antigravity#def456": {
+      type: "oauth",
+      access: "plugin-oauth-access",
+      refresh: "1//bare-oauth-refresh|aicode-consumers",
+      expires: Date.now() + 3_600_000,
+      accountId: email
+    },
+    "agy-cli#abc123": {
+      type: "api",
+      key: "k",
+      metadata: { email, agyHome: "deadbeef12345678" }
+    }
+  });
+  f.write("/fixture-only/.local/state/magpie-agy-bridge/accounts/deadbeef12345678/.gemini/antigravity-cli/antigravity-oauth-token", {
+    id_token_email: email,
+    auth_method: "consumer",
+    token: {
+      access_token: "agy-newer-access",
+      refresh_token: "1//agy-refresh",
+      expiry: new Date(futureAgyMs).toISOString()
+    }
+  });
+  f.write(f.core.PATHS.quotasJson, {
+    [`antigravity/${email}`]: {
+      at: oldAt,
+      quota: {
+        plan: "Google AI Pro",
+        windows: [{ pool: "Claude & GPT", name: "5 hours", used: 50, resetsAt: future() }]
+      }
+    },
+    [`agy-cli/${email}`]: {
+      at: newAt,
+      quota: {
+        windows: [
+          { name: "Claude & GPT · 5 hours", used: 10, remaining: 90, resetsAt: future() },
+          { name: "Gemini · 7 days", used: 20, remaining: 80, resetsAt: future() }
+        ]
+      }
+    }
+  });
+
+  const state = f.core.getFullState();
+  assert.equal(state.accounts.length, 1);
+  const acc = state.accounts[0];
+  assert.equal(acc.plan, "Google AI Pro");
+  assert.equal(acc.isPaid, true);
+  assert.equal(acc.quotaProvider, "agy-cli");
+  assert.equal(acc.quota.pools.find((p) => p.label === "GPT / Claude 5h").remaining, 90);
+  assert.equal(acc.quota.pools.find((p) => p.label === "Gemini 7d").remaining, 80);
+
+  // Uses freshest valid token across agyHome and plugin-auth oauth
+  f.core.switchAccount({ email, target: "cli" });
+  assert.equal(f.read(f.core.PATHS.cliToken).token.refresh_token, "1//agy-refresh");
+
+  // Also verifies piped |project stripping when only plugin:antigravity oauth exists
+  f.write("/fixture-only/.local/state/magpie-agy-bridge/accounts/deadbeef12345678/.gemini/antigravity-cli/antigravity-oauth-token", {});
+  f.write(f.core.PATHS.cliToken, {});
+  f.write(f.core.PATHS.standaloneToken, {});
+  f.write(f.core.PATHS.vaultJson, { accounts: {} });
+  f.core.switchAccount({ email, target: "cli" });
+  assert.equal(f.read(f.core.PATHS.cliToken).token.refresh_token, "1//bare-oauth-refresh");
+  assert.equal(f.core.getFullState().accounts[0].project, "aicode-consumers");
+});
+
+test("corrupt plugin-auth.json is preserved and surfaces state error without writing", async () => {
+  const f = await fixture();
+  f.fs.writeFileSync(f.core.PATHS.pluginAuthJson, "{broken");
+  assert.match(f.core.syncStateFile().error, /plugin-auth\.json/);
+  assert.equal(f.fs.readFileSync(f.core.PATHS.pluginAuthJson, "utf8"), "{broken");
+  assert.throws(() => f.core.organizeAccounts(), /plugin-auth\.json/);
+});
+
+
+test("the page mirrors the agy-cli provider rather than the local backup", async () => {
+  const f = await fixture({ keychain: auth("local@example.test"), agyVersion: "1.5.12" });
+  const { loginsJson, pluginAuthJson, quotasJson, vaultJson } = f.core.PATHS;
+  const known = "enabled@example.test";
+  const providerLogins = [
+    { agent: "plugin:agy-cli", user: known, home: "agy-cli", on: true },
+    { agent: "plugin:agy-cli", user: "disabled@example.test", home: "agy-cli#disabled", on: false },
+    { agent: "plugin:agy-cli", user: "hidden@example.test", home: "agy-cli#hidden", on: true, hidden: "removed" },
+    { agent: "plugin:agy-cli", user: "revoked@example.test", home: "agy-cli#revoked", on: true, lapsed: "revoked" },
+    { agent: "plugin:agy-cli", user: "stale@example.test", home: "agy-cli#stale", on: true },
+    { agent: "plugin:antigravity", user: "other@example.test", home: "antigravity", on: true }
+  ];
+  const authEntry = (email) => ({ type: "api", metadata: { email } });
+  f.write(loginsJson, providerLogins);
+  f.write(pluginAuthJson, {
+    "agy-cli": authEntry(known),
+    "agy-cli#disabled": authEntry("disabled@example.test"),
+    "agy-cli#hidden": authEntry("hidden@example.test"),
+    "agy-cli#revoked": authEntry("revoked@example.test"),
+    "antigravity": authEntry("other@example.test")
+  });
+  f.write(vaultJson, { accounts: { "backup@example.test": { auth: { refresh_token: "backup-token" } } } });
+  f.write(quotasJson, {
+    [`agy-cli/${known}`]: {
+      at: new Date(Date.now() - 6000).toISOString(),
+      quota: { plan: "Google AI Pro", windows: [{ name: "Gemini · 5 hours", used: 25, resetsAt: future() }] }
+    },
+    [`antigravity/${known}`]: {
+      at: new Date().toISOString(),
+      quota: { plan: "Antigravity Starter Quota", windows: [{ name: "Gemini · 5 hours", used: 100, resetsAt: future() }] }
+    }
+  });
+
+  const state = f.core.syncStateFile();
+  assert.deepEqual(Array.from(state.accounts, (a) => a.email).sort(),
+    ["disabled@example.test", known, "revoked@example.test"]);
+  assert.equal(state.accounts.find((a) => a.email === known).quota.pools[0].remaining, 75);
+  assert.equal(state.accounts.find((a) => a.email === known).plan, "Google AI Pro");
+  assert.equal(state.accounts.find((a) => a.email === "disabled@example.test").tierLabel, "已停用");
+  assert.equal(state.accounts.find((a) => a.email === "revoked@example.test").isEligible, false);
+  assert.equal(state.current.cliEmail, "local@example.test");
+
+  f.write(loginsJson, providerLogins.filter((login) => login.user !== known));
+  assert.equal(f.core.syncStateFile().accounts.some((a) => a.email === known), false);
+  assert.ok(f.read(vaultJson).accounts["backup@example.test"]);
+  assert.equal(f.keychain().id_token_email, "local@example.test");
+});
+
+test("refresh queries only enabled Magpie accounts and rereads the roster after a deletion", async () => {
+  const enabled = { agent: "plugin:agy-cli", user: "enabled@example.test", home: "agy-cli", on: true };
+  const disabled = { agent: "plugin:agy-cli", user: "off@example.test", home: "agy-cli#off", on: false };
+  const removed = { agent: "antigravity", user: "removed@example.test", on: true };
+  const f = await fixture({ keychain: auth(enabled.user), agyVersion: "1.5.12" });
+  const { loginsJson, pluginAuthJson, vaultJson } = f.core.PATHS;
+  f.write(loginsJson, [enabled, disabled, removed]);
+  f.write(pluginAuthJson, {
+    "agy-cli": { type: "api", metadata: { email: enabled.user } },
+    "agy-cli#off": { type: "oauth", refresh: "off-token", accountId: disabled.user },
+    "agy-cli#removed": { type: "oauth", refresh: "removed-token", accountId: removed.user }
+  });
+  f.options.refreshQuota = (args) => {
+    assert.deepEqual(Array.from(args), ["quota", "refresh", "agy-cli", enabled.user, "--json"]);
+    f.write(loginsJson, [disabled]);
+    return { cards: [{ provider: "agy-cli", user: enabled.user, plan: "Google AI Pro", windows: [] }] };
+  };
+
+  const result = await f.core.refreshCliAccounts({ force: true });
+  assert.equal(result.total, 1);
+  assert.equal(result.refreshed, 1);
+  assert.deepEqual(Array.from(result.state.accounts, (a) => a.email), [disabled.user]);
+  assert.deepEqual(f.read(loginsJson), [disabled]);
+  assert.equal(f.keychain().id_token_email, enabled.user);
+  assert.ok(f.read(vaultJson).accounts[enabled.user]);
+});
+
+test("Magpie refresh keeps exact provider quotas, honors cache age and preserves values on failure", async () => {
+  const email = "member@example.test";
+  const f = await fixture();
+  f.write(f.core.PATHS.loginsJson, [{ agent: "plugin:agy-cli", user: email, on: true }]);
+  f.write(f.core.PATHS.pluginAuthJson, { "agy-cli": { metadata: { email } } });
+  let nowMs = Date.now();
+  const refresh = (force = false) => f.core.refreshCliAccounts({ force, now: () => nowMs });
+  const windows = [
+    { name: "Claude & GPT · 5 hours", used: 50, resetsAt: future() },
+    { name: "Gemini · 7 days", used: 25, resetsAt: future() },
+    { name: "Gemini 4 Argon · 7 days", used: 100, resetsAt: future() }
+  ];
+  const card = { provider: "agy-cli", user: email, plan: "Google AI Pro", windows };
+  f.options.refreshQuota = () => ({ cards: [
+    { ...card, provider: "antigravity", plan: "Other provider" },
+    { ...card, user: "other@example.test", plan: "Another account" },
+    card
+  ] });
+  const first = await refresh();
+  assert.equal(first.refreshed, 1);
+  assert.equal(first.state.accounts[0].tierLabel, "Google AI Pro");
+  assert.deepEqual(Array.from(first.state.accounts[0].quota.pools, (p) => p.remaining), [50, 75, 0]);
+
+  nowMs += 60_000;
+  const callsBefore = f.calls.length;
+  const recent = await refresh();
+  assert.equal(recent.skipped, 1);
+  assert.equal(f.calls.slice(callsBefore).some((call) => call.cmd === "magpie"), false);
+
+  f.options.refreshQuota = () => ({ cards: [card], stderr: "read 6s ago: not asked again before 30s have passed" });
+  const limited = await refresh(true);
+  assert.equal(limited.refreshed, 0);
+  assert.match(limited.message, /沿用 1 个账号的近期额度/);
+
+  nowMs += 60_000;
+  f.options.refreshQuota = () => ({ cards: [{ ...card, error: "agy usage query timed out.", windows: [] }] });
+  const failed = await refresh(true);
+  assert.equal(failed.failed, 1);
+  assert.equal(failed.state.accounts[0].quota.pools.length, 3);
+  assert.match(failed.state.accounts[0].quota.refreshError, /timed out/);
+});
+
+test("corrupt cliQuotaCache file is preserved without overwriting", async () => {
+  const f = await fixture();
+  f.fs.writeFileSync(f.core.PATHS.cliQuotaCache, "{broken");
+  assert.match(f.core.syncStateFile().error, /antigravity-switch-cli-cache\.json/);
+  assert.equal(f.fs.readFileSync(f.core.PATHS.cliQuotaCache, "utf8"), "{broken");
+});
+
+test("open-github command launches repository URL in default browser", async () => {
+  const f = await fixture();
+  const res = await f.core.executeCommandAsync({
+    id: "cmd-open-github",
+    ts: Date.now(),
+    type: "open-github"
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.action, "open-github");
+  assert.equal(res.url, "https://github.com/0xTotoroX/magpie-antigravity-switch");
+  assert(
+    f.calls.some(
+      (c) => c.cmd === "open" && c.args[0] === "https://github.com/0xTotoroX/magpie-antigravity-switch"
+    )
+  );
+  const state = f.core.syncStateFile();
+  assert.equal(state.lastSwitch?.cmdId, "cmd-open-github");
+  assert.equal(state.lastSwitch?.ok, true);
+  assert.match(state.lastSwitch?.message || "", /GitHub.*Star/);
+});
+
+test("Magpie refresh recognizes Ultra and reports Carbon separately", async () => {
+  const email = "ultra@example.test";
+  const f = await fixture();
+  f.write(f.core.PATHS.loginsJson, [{ agent: "plugin:agy-cli", user: email, on: true }]);
+  f.write(f.core.PATHS.pluginAuthJson, { "agy-cli": { type: "api", metadata: { email } } });
+  f.options.refreshQuota = () => ({ cards: [{
+    provider: "agy-cli", user: email, plan: "g1-ultra-tier",
+    windows: [
+      { name: "Gemini · 5 hours", used: 50 },
+      { name: "Gemini 4 Argon · 7 days", used: 25 },
+      { name: "Gemini 4 Carbon Models · 5 hours", used: 100 },
+      { name: "Gemini 4 Carbon · 7 days", used: 60 }
+    ]
+  }] });
+  const result = await f.core.refreshCliAccounts({ force: true });
+  assert.equal(result.refreshed, 1);
+  const account = result.state.accounts[0];
+  assert.equal(account.planFamily, "ultra");
+  assert.equal(account.tierLabel, "Google AI Ultra");
+  assert.equal(account.isPaid, true);
+  assert.deepEqual(Array.from(account.quota.pools, (pool) => [pool.label, pool.remaining]), [
+    ["Gemini 5h", 50], ["Gemini 4 Argon 7d", 75], ["Gemini 4 Carbon 5h", 0], ["Gemini 4 Carbon 7d", 40]
+  ]);
 });

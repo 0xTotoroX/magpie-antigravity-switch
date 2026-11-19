@@ -45,8 +45,13 @@ test("sandboxed page requests no undeclared reads or external network", () => {
   const html = fs.readFileSync(new URL("../page/index.html", import.meta.url), "utf8");
   const script = fs.readFileSync(new URL("../page/app.js", import.meta.url), "utf8");
   assert.deepEqual(pkg.magpie.permissions, []);
+  assert.match(pkg.magpie.icon, /^data:image\/svg\+xml;base64,/);
+  const iconSvg = fs.readFileSync(new URL("../page/icon.svg", import.meta.url));
+  assert.equal(pkg.magpie.icon, `data:image/svg+xml;base64,${iconSvg.toString("base64")}`);
   assert.doesNotMatch(script, /magpie\s*\.\s*read\s*\(/);
   assert.doesNotMatch(script, /\b(fetch|XMLHttpRequest|WebSocket|EventSource)\s*\(/);
+  assert.match(html, /id="btnGitHubStar"/);
+  assert.doesNotMatch(html, /target="_blank"/);
   for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)) {
     assert.equal(match[2].trim(), "");
     assert.match(match[1], /\bsrc="(?!https?:|\/\/)[^"]+"/);

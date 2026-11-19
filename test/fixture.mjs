@@ -50,6 +50,13 @@ export async function fixture(options = {}) {
     }
   };
   const childProcess = {
+    execFile(cmd, args, _opts, callback) {
+      calls.push({ cmd, args });
+      Promise.resolve().then(() => {
+        if (cmd !== "magpie" || !options.refreshQuota) throw new Error("Unexpected quota command");
+        return options.refreshQuota(args);
+      }).then(({ cards, stderr = "" }) => callback(null, JSON.stringify(cards), stderr), callback);
+    },
     execFileSync(cmd, args = []) {
       calls.push({ cmd, args });
       if (cmd === "security") {
@@ -73,6 +80,7 @@ export async function fixture(options = {}) {
       if (cmd === "ps") return (options.liveStatus || options.running)
         ? "fixture 4242 0 0 0 0 ?? S 0:00 /Applications/Antigravity.app/Contents/Resources/bin/language_server --csrf_token abc-def" : "";
       if (cmd === "lsof") return "server 4242 fixture TCP 127.0.0.1:40001 (LISTEN)";
+      if (cmd === "open") return "";
       if (cmd === "curl") {
         if (!options.liveStatus) throw new Error("fixture live status unavailable");
         return JSON.stringify({ userStatus: options.liveStatus });

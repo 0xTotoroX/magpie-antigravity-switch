@@ -11,6 +11,7 @@ import {
   getFullState,
   importAccountToMagpie,
   organizeAccounts,
+  refreshCliAccounts,
   reloadDesktopLanguageServer,
   setPreferences,
   switchAccount,
@@ -34,7 +35,7 @@ export const AntigravitySwitchPlugin = async () => {
 export default AntigravitySwitchPlugin;
 
 function printStatus() {
-  const state = syncStateFile();
+  const state = syncStateFile({ fullResult: true });
   if (state.error) throw new Error(state.error);
   const daemonInfo = ensureBackgroundWatcher();
   console.log("=== Antigravity 账号状态 ===");
@@ -125,6 +126,17 @@ async function runCli() {
     return;
   }
 
+  if (cmd === "refresh") {
+    const res = await refreshCliAccounts({ force: !args.includes("--cached") });
+    console.log(res.message);
+    if (res.errors?.length) {
+      for (const e of res.errors) {
+        console.error(`- ${e.email}: ${e.error}`);
+      }
+    }
+    return;
+  }
+
   if (cmd === "reload") {
     const res = reloadDesktopLanguageServer(getFullState().current.desktopSavedEmail || "");
     console.log(res.reason);
@@ -139,6 +151,7 @@ async function runCli() {
 
   console.log("用法:");
   console.log("  node index.mjs status");
+  console.log("  node index.mjs refresh [--cached]");
   console.log("  node index.mjs switch <email|best> [--no-reload] [--target=all|desktop|cli] [--no-magpie]");
   console.log("  node index.mjs organize [--members-only|--all]");
   console.log("  node index.mjs members-only [on|off]（兼容 pro-only）");

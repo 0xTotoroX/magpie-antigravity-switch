@@ -5,7 +5,7 @@ import vm from "node:vm";
 import path from "node:path";
 import { project } from "./fixture.mjs";
 
-function page(state) {
+function page(state, language = "zh-CN") {
   const elements = new Map();
   const document = {
     getElementById(id) {
@@ -20,11 +20,15 @@ function page(state) {
     },
     addEventListener() {}
   };
-  const context = vm.createContext({ document, setInterval() {}, __AGY_SWITCH_STATE__: state });
+  let localeChanged;
+  const magpie = { theme: { lang: language }, onTheme: (callback) => { localeChanged = callback; } };
+  const context = vm.createContext({ document, magpie, setInterval() {}, __AGY_SWITCH_STATE__: state });
+  vm.runInContext(fs.readFileSync(path.join(project, "page/i18n.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(project, "page/app.js"), "utf8"), context);
-  return { el: id => document.getElementById(id), render: state => context.__AGY_SWITCH_ON_STATE__(state) };
+  return { el: id => document.getElementById(id), render: state => context.__AGY_SWITCH_ON_STATE__(state),
+    setLanguage: (lang) => localeChanged({ lang }) };
 }
-const baseState = () => ({ current: {}, counts: { pro: 0, free: 0, unknown: 0, ineligible: 0 }, accounts: [], preferences: { onlyPro: true } });
+const baseState = () => ({ current: {}, counts: { pro: 0, free: 0, unknown: 0, ineligible: 0 }, accounts: [], preferences: { onlyPro: false } });
 
 function accountRow(html, email) {
   return html.split('<div class="account-row">').find((row) => row.startsWith("\n") && row.includes(`class="account-email">${email}</span>`)) || "";
@@ -82,16 +86,15 @@ test("#8 page does not describe an unknown quota or plan as normal or free", () 
 test("#3 page surfaces read errors, disables writes and clears the recovered error", () => {
   const p = page({ ...baseState(), error: "logins.json 格式无效，已保留原文件" });
   assert.match(p.el("toastBanner").textContent, /保留原文件/);
-  assert.equal(p.el("btnOrganize").disabled, true);
-  assert.equal(p.el("btnTogglePro").disabled, true);
+  assert.equal(p.el("btnRefresh").disabled, false);
   p.render(baseState());
-  assert.equal(p.el("btnOrganize").disabled, false);
+  assert.equal(p.el("btnRefresh").disabled, false);
   assert.equal(p.el("toastBanner").classList.contains("hidden"), true);
 });
 
-test("member filtering includes Ultra and Enterprise and preserves every plan label", () => {
+test("the provider list preserves plan labels even with an older member-only preference", () => {
   const state = baseState();
-  state.counts = { paid: 4, pro: 1, free: 1, unknown: 1, ineligible: 0 };
+  state.preferences.onlyPro = true;
   state.accounts = ["Google AI Pro", "Google AI Ultra (5x)", "Google AI Ultra (20x)", "Enterprise"].map((plan, i) => ({
     email: `paid-${i}@example.test`, tierLabel: plan, plan,
     isPaid: true, isPro: false, isEligible: true, hasCredentials: true
@@ -101,11 +104,8 @@ test("member filtering includes Ultra and Enterprise and preserves every plan la
   const p = page(state);
   const rows = p.el("accountList").innerHTML;
   for (const plan of ["Google AI Pro", "Google AI Ultra (5x)", "Google AI Ultra (20x)", "Enterprise"]) assert(rows.includes(plan));
-  assert.doesNotMatch(rows, /free@example.test|unknown@example.test/);
-  assert.equal(p.el("btnTogglePro").textContent, "显示全部");
-  p.render({ ...state, preferences: { onlyPro: false } });
-  assert.match(p.el("accountList").innerHTML, /free@example.test/);
-  assert.equal(p.el("btnTogglePro").textContent, "隐藏非会员");
+  assert.match(rows, /free@example.test/);
+  assert.match(rows, /unknown@example.test/);
 });
 
 test("quota columns stay in model/window order regardless of input order", () => {
@@ -153,16 +153,80 @@ test("account types are separate sections and inactive accounts stay collapsed a
     { email: "unknown@example.test", isEligible: true, hasCredentials: true },
     { email: "free@example.test", isEligible: true, isFree: true, plan: "Starter", hasCredentials: true },
     { email: "paid@example.test", isEligible: true, isPaid: true, plan: "Google AI Ultra (20x)", hasCredentials: true },
-    { email: "unavailable@example.test", isEligible: false }
+    { email: "unavailable@example.test", isEligible: false, tierLabel: "已停用", ineligibleReason: "已在 Magpie 停用" }
   ];
   const p = page(state), html = p.el("accountList").innerHTML;
   assert(html.indexOf('aria-label="会员账号"') < html.indexOf('aria-label="免费账号"'));
   assert(html.indexOf('aria-label="免费账号"') < html.indexOf('aria-label="套餐未知"'));
   assert.match(html, /Google AI Ultra \(20x\)/);
   assert.doesNotMatch(html, /unavailable@example.test/);
-  assert.match(p.el("unavailableList").innerHTML, /unavailable@example.test/);
+  const disabledRow = p.el("unavailableList").innerHTML;
+  assert.match(disabledRow, /unavailable@example.test/);
+  assert.match(disabledRow, /已停用/);
+  assert.doesNotMatch(disabledRow, /data-action="switch/);
   assert.equal(p.el("unavailableAccounts").hidden, false);
   p.el("unavailableAccounts").open = true;
   p.render(state);
   assert.equal(p.el("unavailableAccounts").open, true);
+});
+
+test("Carbon appears only for the windows supplied by an eligible account", () => {
+  const state = baseState();
+  const ultra = { email: "ultra@example.test", isEligible: true, isPaid: true, tierLabel: "Google AI Ultra" };
+  const pro = { email: "pro@example.test", isEligible: true, isPaid: true, tierLabel: "Google AI Pro" };
+  state.accounts = [ultra, pro];
+  const p = page(state);
+  assert.doesNotMatch(p.el("accountList").innerHTML, /Gemini 4 Carbon/);
+
+  ultra.quota = { pools: [{ pool: "Gemini 4 Carbon", window: "7 days", remaining: 0 }] };
+  p.render(state);
+  let html = p.el("accountList").innerHTML;
+  assert.match(html, /<strong>Gemini 4 Carbon<\/strong>/);
+  assert.match(accountRow(html, ultra.email), /Gemini 4 Carbon 7d：0%/);
+  assert.match(accountRow(html, pro.email), /Gemini 4 Carbon 7d：未知/);
+  assert.doesNotMatch(html, /Gemini 4 Carbon 5h/);
+
+  ultra.quota.pools.push({ pool: "Gemini 4 Carbon", window: "5 hours", remaining: 60 });
+  p.render(state);
+  html = p.el("accountList").innerHTML;
+  assert.match(accountRow(html, ultra.email), /Gemini 4 Carbon 5h：60%/);
+  assert.match(html, /--carbon-width: 2fr/);
+});
+
+test("the page follows Magpie language changes and leaves provider plans intact", () => {
+  const state = baseState();
+  state.accounts = [{
+    email: "member@example.test", plan: "Google AI Ultra (20x)", isEligible: true, isPaid: true,
+    hasCredentials: true, activeDesktop: true, activeMagpieFirst: true,
+    quota: { pools: [{ pool: "Gemini", window: "5 hours", remaining: 75,
+      resetsAt: new Date(Date.now()+7200_000).toISOString() }] }
+  }];
+  const p = page(state, "en-US");
+  assert.equal(p.el("btnRefresh").textContent, "Refresh");
+  let html = p.el("accountList").innerHTML;
+  assert.match(html, /Paid accounts/);
+  assert.match(html, /Magpie preferred/);
+  assert.match(html, /Google AI Ultra \(20x\)/);
+  assert.match(html, /Gemini 5h: 75%/);
+  assert.match(html, /Reset time: /);
+  assert.match(html, /Resets in 2h/);
+  assert.match(html, /CLI only/);
+  assert.doesNotMatch(html, /\p{Script=Han}/u);
+
+  p.render({ ...state, lastSwitch: { id: "refresh", message: "已同步 1 个账号，已刷新 1 个账号的额度", ok: true } });
+  assert.equal(p.el("toastBanner").textContent, "Synced 1 account, refreshed quotas for 1 account");
+  p.setLanguage("zh-CN");
+  assert.equal(p.el("btnRefresh").textContent, "刷新");
+  assert.match(p.el("accountList").innerHTML, /Magpie 首选/);
+  assert.equal(p.el("toastBanner").textContent, "已同步 1 个账号，已刷新 1 个账号的额度");
+});
+
+test("English shows recoverable configuration errors and disabled provider status", () => {
+  const p = page({ ...baseState(), error: "logins.json 格式无效，已保留原文件" }, "en");
+  assert.equal(p.el("toastBanner").textContent, "logins.json has an invalid format. The original file was preserved.");
+  p.render({ ...baseState(), accounts: [{ email: "disabled@example.test", isEligible: false,
+    tierLabel: "已停用", ineligibleReason: "已在 Magpie 停用" }] });
+  assert.match(p.el("unavailableSummary").textContent, /Unavailable accounts/);
+  assert.match(p.el("unavailableList").innerHTML, /Disabled in Magpie/);
+  assert.doesNotMatch(p.el("unavailableList").innerHTML, /\p{Script=Han}/u);
 });

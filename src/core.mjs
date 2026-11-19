@@ -1,6 +1,6 @@
 /**
- * [INPUT]: Magpie 套餐与配额 JSON、本地凭据、macOS security 与 language_server 登录身份。
- * [OUTPUT]: Magpie 单一来源的套餐与配额窗口、会员分类、登录状态、校验备份、账号操作与无凭据的 page/state.js。
+ * [INPUT]: Magpie logins/plugin-auth/配额 JSON、隔离 agyHome 令牌、macOS security 与 language_server 登录身份。
+ * [OUTPUT]: Magpie 单一来源（兼容 legacy antigravity、plugin:antigravity 与 plugin:agy-cli）的套餐与配额窗口、会员分类、登录状态、校验备份、账号操作与无凭据的 page/state.js。
  * [POS]: CLI 与守护进程共用核心；状态脚本供 page/app.js 渲染，运行身份与待生效凭据分别返回。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -23,9 +23,11 @@ const HOME = os.homedir();
 export const PATHS = {
   magpieDir: path.join(HOME, ".config", "magpie"),
   loginsJson: path.join(HOME, ".config", "magpie", "logins.json"),
+  pluginAuthJson: path.join(HOME, ".config", "magpie", "plugin-auth.json"),
   quotasJson: path.join(HOME, ".config", "magpie", "quotas.json"),
   pluginsJson: path.join(HOME, ".config", "magpie", "plugins.json"),
   vaultJson: path.join(HOME, ".config", "magpie", "antigravity-switch-vault.json"),
+  cliQuotaCache: path.join(HOME, ".config", "magpie", "antigravity-switch-cli-cache.json"),
   cliToken: path.join(HOME, ".gemini", "antigravity-cli", "antigravity-oauth-token"),
   standaloneToken: path.join(HOME, ".gemini", "jetski-standalone-oauth-token"),
   appStorage: path.join(HOME, "Library", "Application Support", "Antigravity", "app_storage.json"),
@@ -35,6 +37,12 @@ export const PATHS = {
   daemonLock: path.join(HOME, ".config", "magpie", "antigravity-switch-daemon.json")
 };
 
+const SUPPORTED_LOGIN_AGENTS = ["plugin:agy-cli", "plugin:antigravity", "antigravity"];
+const QUOTA_PROVIDER_PREFIXES = ["agy-cli", "antigravity"];
+const AGY_HOME_ID = /^[a-z0-9]{8,32}$/;
+const CLI_QUOTA_TTL_MS = 15 * 60_000;
+const CLI_BACKOFF_FIRST_MS = 5 * 60_000;
+const CLI_BACKOFF_MAX_MS = 60 * 60_000;
 const KEYCHAIN_SERVICE = "gemini";
 const KEYCHAIN_ACCOUNT = "antigravity";
 const KEYCHAIN_PREFIX = "go-keyring-base64:";
@@ -44,9 +52,12 @@ const RELOAD_WINDOW_MS = 65_000;
 const MAX_RELOADS_PER_WINDOW = 2;
 
 function sanitizeErrorMessage(err) {
-  const raw = String(err?.message || err || "操作失败");
+  const baseMsg = String(err?.message || err || "操作失败");
+  const causeDetail = err?.cause?.code || err?.cause?.message || "";
+  const raw = causeDetail && !baseMsg.includes(causeDetail) ? `${baseMsg} (${causeDetail})` : baseMsg;
   const cleaned = raw
     .replace(/go-keyring-base64:[A-Za-z0-9+/=_-]+/g, "[REDACTED]")
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
     .replace(/ya29\.[A-Za-z0-9._-]+/g, "[REDACTED]")
     .replace(/1\/\/[A-Za-z0-9._-]+/g, "[REDACTED]")
     .replace(/Command failed:\s*security\s+[^\n]+/gi, "写入 macOS 钥匙串失败");
@@ -85,6 +96,77 @@ function readJsonForUpdate(filePath, fallback, validate) {
 
 const isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const readLogins = () => readJsonForUpdate(PATHS.loginsJson, [], Array.isArray);
+const readPluginAuth = () => readJsonForUpdate(PATHS.pluginAuthJson, {}, isRecord);
+const readCliQuotaCache = () => {
+  const data = readJsonForUpdate(
+    PATHS.cliQuotaCache,
+    { version: 1, accounts: {} },
+    (value) => isRecord(value) && (value.accounts === undefined || isRecord(value.accounts))
+  );
+  return {
+    version: 1,
+    ...data,
+    accounts: isRecord(data?.accounts) ? data.accounts : {}
+  };
+};
+
+function saveCliQuotaCache(cache) {
+  writeJsonAtomic(
+    PATHS.cliQuotaCache,
+    {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      accounts: isRecord(cache?.accounts) ? cache.accounts : {}
+    },
+    0o600
+  );
+}
+
+function normalizeEmail(value) {
+  return typeof value === "string" && value.includes("@") ? value.trim() : null;
+}
+
+function getAgyAccountsDir() {
+  const stateBase =
+    (typeof process !== "undefined" && process.env?.XDG_STATE_HOME) ||
+    path.join(HOME, ".local", "state");
+  return path.join(stateBase, "magpie-agy-bridge", "accounts");
+}
+
+function agyHomeTokenPath(agyHome) {
+  if (typeof agyHome !== "string" || !AGY_HOME_ID.test(agyHome)) return null;
+  return path.join(getAgyAccountsDir(), agyHome, ".gemini", "antigravity-cli", "antigravity-oauth-token");
+}
+
+function isSupportedLoginAgent(agent) {
+  return typeof agent === "string" && SUPPORTED_LOGIN_AGENTS.includes(agent);
+}
+
+function isPluginLoginAgent(agent) {
+  return agent === "plugin:agy-cli" || agent === "plugin:antigravity";
+}
+
+function isMagpieAgyCliLogin(item, pluginAuth) {
+  return item?.agent === "plugin:agy-cli" && !item.hidden &&
+    isRecord(pluginAuth[getLoginHomeKey(item)]);
+}
+
+function getLoginHomeKey(item) {
+  if (!item || typeof item !== "object") return null;
+  if (typeof item.home === "string" && item.home.trim()) return item.home.trim();
+  if (item.agent === "plugin:antigravity") return "antigravity";
+  if (item.agent === "plugin:agy-cli") return "agy-cli";
+  return null;
+}
+
+function isRelevantPluginAuthKey(key) {
+  return (
+    key === "antigravity" ||
+    key.startsWith("antigravity#") ||
+    key === "agy-cli" ||
+    key.startsWith("agy-cli#")
+  );
+}
 
 function writeJsonAtomic(filePath, data, mode = 0o600) {
   const dir = path.dirname(filePath);
@@ -419,31 +501,114 @@ function queryLiveLanguageServerIdentity() {
   }
 }
 
+function extractPluginCredential(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  if (entry.type === "oauth" && typeof entry.refresh === "string") {
+    const parts = entry.refresh.split("|");
+    const refreshToken = (parts[0] || "").trim();
+    if (!refreshToken) return null;
+    const project = (parts[1] || "").trim() || null;
+    const accessToken = typeof entry.access === "string" ? entry.access.trim() : "";
+    const expiryRaw = Number(entry.expires);
+    const expiryDate = Number.isFinite(expiryRaw) && expiryRaw > 0 ? expiryRaw : 0;
+    const email = normalizeEmail(entry.accountId || entry.metadata?.email);
+    const auth = {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      expiry_date: expiryDate,
+      ...(project ? { project } : {})
+    };
+    return {
+      email,
+      project,
+      auth,
+      clientPayload: email ? toClientOAuthPayload(email, auth) : null,
+      agyHome: null,
+      source: "magpie-plugin-auth"
+    };
+  }
+
+  const metaEmail = normalizeEmail(entry.metadata?.email || entry.accountId);
+  const rawHome = entry.metadata?.agyHome;
+  const agyHome = typeof rawHome === "string" && AGY_HOME_ID.test(rawHome) ? rawHome : null;
+  if (!agyHome) {
+    return metaEmail
+      ? { email: metaEmail, project: null, auth: null, clientPayload: null, agyHome: null, source: "agy-cli-default" }
+      : null;
+  }
+
+  const tokenPath = agyHomeTokenPath(agyHome);
+  const payload = tokenPath ? readJsonSafe(tokenPath, null) : null;
+  const email = normalizeEmail(payload?.id_token_email) || metaEmail;
+  const refreshToken =
+    typeof payload?.token?.refresh_token === "string" ? payload.token.refresh_token.trim() : "";
+  if (!refreshToken) {
+    return email
+      ? { email, project: null, auth: null, clientPayload: null, agyHome, source: "agy-cli-home" }
+      : null;
+  }
+  const accessToken =
+    typeof payload?.token?.access_token === "string" ? payload.token.access_token.trim() : "";
+  const expiryDate = parseExpiryMs(payload);
+  const auth = {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expiry_date: expiryDate
+  };
+  return {
+    email,
+    project: null,
+    auth,
+    clientPayload: email ? toClientOAuthPayload(email, payload, payload) : payload,
+    agyHome,
+    source: "agy-cli-home"
+  };
+}
+
 export function captureLiveClientAccounts() {
   ensureInitialBackup();
   const vault = readVault();
   let changed = false;
 
-  const upsertFromClient = (payload, sourceName) => {
-    const email = payload?.id_token_email?.trim?.();
-    const refreshToken = payload?.token?.refresh_token?.trim?.();
-    const accessToken = payload?.token?.access_token?.trim?.();
+  const upsertTokenRecord = (
+    { email, project = null, accessToken = "", refreshToken = "", expiryDate = 0, clientPayload = null, sourceName },
+    { preserveMatchingToken = false } = {}
+  ) => {
     if (!email || !refreshToken) return;
-
     const existing = vault.accounts[email] || {};
     const existingExpiry = parseExpiryMs(existing.auth || existing.clientPayload);
-    const incomingExpiry = parseExpiryMs(payload);
+    const incomingExpiry = expiryDate || parseExpiryMs(clientPayload);
 
-    const shouldUpdateToken =
-      !existing.auth?.refresh_token ||
-      incomingExpiry >= existingExpiry ||
-      existing.auth?.access_token !== accessToken;
+    const isSameToken =
+      existing.auth?.refresh_token === refreshToken &&
+      existing.auth?.access_token === accessToken &&
+      existingExpiry === incomingExpiry &&
+      (!project || existing.project === project);
+
+    const shouldUpdateToken = preserveMatchingToken
+      ? !isSameToken && (
+          !existing.auth?.refresh_token ||
+          (incomingExpiry > 0 && incomingExpiry > existingExpiry) ||
+          (incomingExpiry >= existingExpiry && Boolean(accessToken) && existing.auth?.access_token !== accessToken) ||
+          (incomingExpiry >= existingExpiry && existing.auth?.refresh_token !== refreshToken)
+        )
+      : (
+          !existing.auth?.refresh_token ||
+          incomingExpiry >= existingExpiry ||
+          existing.auth?.access_token !== accessToken
+        );
 
     if (shouldUpdateToken) {
+      const nextProject = project || existing.project || "aicode-consumers";
+      const nextPayload = clientPayload || toClientOAuthPayload(email, {
+        access_token: accessToken || existing.auth?.access_token || "",
+        refresh_token: refreshToken,
+        expiry_date: incomingExpiry || existingExpiry
+      });
       vault.accounts[email] = {
         ...existing,
         email,
-        project: existing.project || "aicode-consumers",
+        project: nextProject,
         plan: existing.plan || null,
         capturedFrom: sourceName,
         capturedAt: new Date().toISOString(),
@@ -451,12 +616,26 @@ export function captureLiveClientAccounts() {
           access_token: accessToken || existing.auth?.access_token || "",
           refresh_token: refreshToken,
           expiry_date: incomingExpiry || existingExpiry || Date.now() + 3600_000,
-          project: existing.project || "aicode-consumers"
+          project: nextProject
         },
-        clientPayload: toClientOAuthPayload(email, payload, payload)
+        clientPayload: toClientOAuthPayload(email, nextPayload, nextPayload)
       };
       changed = true;
     }
+  };
+
+  const upsertFromClient = (payload, sourceName) => {
+    const email = normalizeEmail(payload?.id_token_email);
+    const refreshToken = payload?.token?.refresh_token?.trim?.();
+    const accessToken = payload?.token?.access_token?.trim?.() || "";
+    upsertTokenRecord({
+      email,
+      accessToken,
+      refreshToken,
+      expiryDate: parseExpiryMs(payload),
+      clientPayload: payload,
+      sourceName
+    });
   };
 
   const keychainPayload = readKeychainAuth();
@@ -474,12 +653,44 @@ export function captureLiveClientAccounts() {
     upsertFromClient(standalonePayload, "standalone-token");
   }
 
+  const pluginAuth = readPluginAuth();
+  const pluginCredentials = new Map();
+  for (const [key, entry] of Object.entries(pluginAuth)) {
+    if (!isRelevantPluginAuthKey(key)) continue;
+    const cred = extractPluginCredential(entry);
+    if (!cred) continue;
+    pluginCredentials.set(key, cred);
+    if (cred.email && cred.auth?.refresh_token) {
+      upsertTokenRecord(
+        {
+          email: cred.email,
+          project: cred.project,
+          accessToken: cred.auth.access_token,
+          refreshToken: cred.auth.refresh_token,
+          expiryDate: cred.auth.expiry_date,
+          clientPayload: cred.clientPayload,
+          sourceName: cred.source
+        },
+        { preserveMatchingToken: true }
+      );
+    }
+  }
+
   const liveLs = queryLiveLanguageServerIdentity();
 
   if (changed) {
     saveVault(vault);
   }
-  return { vault, keychainPayload, cliPayload, standalonePayload, liveLs };
+  return { vault, keychainPayload, cliPayload, standalonePayload, pluginAuth, pluginCredentials, liveLs };
+}
+
+function quotaWindowMatches(window, spec) {
+  if (!window) return false;
+  const [pool, period] = window.pool
+    ? [window.pool, window.name]
+    : String(window.name || "").split(" · ", 2);
+  return period === spec.name && (pool === spec.pool ||
+    (spec.pool === "Gemini 4 Carbon" && /^(?:gemini[ -]+4[ -]+)?carbon(?: models?)?$/i.test(pool)));
 }
 
 function summarizeQuotaEntry(entry) {
@@ -491,12 +702,14 @@ function summarizeQuotaEntry(entry) {
     { pool: "Claude & GPT", name: "7 days", label: "GPT / Claude 7d" },
     { pool: "Gemini", name: "5 hours", label: "Gemini 5h" },
     { pool: "Gemini", name: "7 days", label: "Gemini 7d" },
-    { pool: "Gemini 4 Argon", name: "7 days", label: "Gemini 4 Argon 7d" }
+    { pool: "Gemini 4 Argon", name: "7 days", label: "Gemini 4 Argon 7d" },
+    { pool: "Gemini 4 Carbon", name: "5 hours", label: "Gemini 4 Carbon 5h" },
+    { pool: "Gemini 4 Carbon", name: "7 days", label: "Gemini 4 Carbon 7d" }
   ];
 
   const nowMs = Date.now();
   for (const spec of desired) {
-    const win = windows.find((w) => w.pool === spec.pool && w.name === spec.name);
+    const win = windows.find((window) => quotaWindowMatches(window, spec));
     if (win && !entry.error) {
       const resetMs = win.resetsAt ? Date.parse(win.resetsAt) : 0;
       const isExpired = resetMs > 0 && resetMs <= nowMs;
@@ -520,20 +733,170 @@ function summarizeQuotaEntry(entry) {
   return {
     source: "magpie",
     plan: entry.quota.plan || null,
-    updatedAt: entry.at || null,
+    updatedAt: entry.at || entry.quota.readAt || null,
     error: entry.error || null,
     pools
   };
 }
 
+function findQuotaEntry(quotas, prefix, email) {
+  if (!quotas || typeof quotas !== "object" || !email) return null;
+  const direct = quotas[`${prefix}/${email}`];
+  if (direct) return direct;
+  const lowerEmail = email.toLowerCase();
+  const lowerDirect = quotas[`${prefix}/${lowerEmail}`];
+  if (lowerDirect) return lowerDirect;
+  const keyPrefix = `${prefix}/`;
+  for (const [k, v] of Object.entries(quotas)) {
+    if (k.startsWith(keyPrefix) && k.slice(keyPrefix.length).toLowerCase() === lowerEmail) {
+      return v;
+    }
+  }
+  return null;
+}
+
+function findCliCacheEntry(cliCache, email) {
+  const accounts = cliCache?.accounts;
+  if (!accounts || typeof accounts !== "object" || !email) return null;
+  if (accounts[email]) return accounts[email];
+  const lower = email.toLowerCase();
+  if (accounts[lower]) return accounts[lower];
+  for (const [k, v] of Object.entries(accounts)) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  return null;
+}
+
+function resolveQuotaForEmail(email, quotas, cliCache = null, providers = QUOTA_PROVIDER_PREFIXES) {
+  const candidates = [];
+  const cliEntry = findCliCacheEntry(cliCache, email);
+  if (cliEntry) {
+    const cliSummary = summarizeQuotaEntry({
+      at: cliEntry.fetchedAt || null,
+      error: cliEntry.error || null,
+      quota: cliEntry.quota || (cliEntry.plan ? { plan: cliEntry.plan, windows: [] } : null)
+    });
+    if (cliSummary) {
+      candidates.push({
+        provider: "agy-cli",
+        fromCliCache: true,
+        entry: cliEntry,
+        summary: {
+          ...cliSummary,
+          refreshError: cliEntry.refreshError || null
+        },
+        atMs: Date.parse(cliSummary.updatedAt || "") || 0
+      });
+    }
+  }
+  for (const provider of providers) {
+    const entry = findQuotaEntry(quotas, provider, email);
+    const summary = summarizeQuotaEntry(entry);
+    if (!summary) continue;
+    const atMs = Date.parse(summary.updatedAt || "") || 0;
+    candidates.push({ provider, fromCliCache: false, entry, summary, atMs });
+  }
+  if (candidates.length === 0) return null;
+
+  const withPlan = [...candidates]
+    .filter((c) => typeof c.summary.plan === "string" && c.summary.plan.trim())
+    .sort((a, b) => b.atMs - a.atMs || Number(b.fromCliCache) - Number(a.fromCliCache));
+  const resolvedPlan = withPlan[0]?.summary.plan || null;
+
+  const healthyWithPools = candidates
+    .filter((c) => !c.summary.error && c.summary.pools.length > 0)
+    .sort((a, b) => b.atMs - a.atMs || Number(b.fromCliCache) - Number(a.fromCliCache));
+  const healthy = candidates
+    .filter((c) => !c.summary.error)
+    .sort((a, b) => b.atMs - a.atMs || Number(b.fromCliCache) - Number(a.fromCliCache));
+  const errored = [...candidates].sort((a, b) => b.atMs - a.atMs || Number(b.fromCliCache) - Number(a.fromCliCache));
+
+  const selected = healthyWithPools[0] || healthy[0] || errored[0];
+  const cliErr = cliEntry?.refreshError || (cliEntry?.error && !selected.summary.error ? cliEntry.error : null);
+  return {
+    ...selected.summary,
+    provider: selected.provider,
+    plan: resolvedPlan || selected.summary.plan || null,
+    refreshError: selected.summary.refreshError || cliErr || null
+  };
+}
+
 function getLoginEmail(item) {
   if (!item || typeof item !== "object") return null;
-  const raw = item.user || item.email || item.name;
-  return typeof raw === "string" && raw.includes("@") ? raw.trim() : null;
+  return normalizeEmail(item.user || item.email || item.name);
+}
+
+function resolveLoginItemEmail(item, pluginCredentials) {
+  const direct = getLoginEmail(item);
+  if (direct) return direct;
+  const homeKey = getLoginHomeKey(item);
+  return homeKey ? pluginCredentials?.get(homeKey)?.email || null : null;
+}
+
+function collectPluginCredentialsForEmail(email, matchingLogins, pluginCredentials) {
+  const seenKeys = new Set();
+  const list = [];
+  if (pluginCredentials instanceof Map) {
+    for (const login of matchingLogins || []) {
+      const homeKey = getLoginHomeKey(login);
+      if (homeKey && !seenKeys.has(homeKey) && pluginCredentials.has(homeKey)) {
+        seenKeys.add(homeKey);
+        list.push(pluginCredentials.get(homeKey));
+      }
+    }
+    for (const [key, cred] of pluginCredentials.entries()) {
+      if (!seenKeys.has(key) && cred?.email === email) {
+        seenKeys.add(key);
+        list.push(cred);
+      }
+    }
+  }
+  return list;
+}
+
+function collectCredentialCandidates(email, matchingLogins, pluginCredentials, vaultEntry) {
+  const candidates = [];
+  for (const item of matchingLogins || []) {
+    if (item?.agent === "antigravity" && item?.auth?.refresh_token) {
+      candidates.push({
+        auth: item.auth,
+        clientPayload: null,
+        expiry: parseExpiryMs(item.auth),
+        source: "magpie-login"
+      });
+    }
+  }
+  for (const cred of collectPluginCredentialsForEmail(email, matchingLogins, pluginCredentials)) {
+    if (cred?.auth?.refresh_token) {
+      candidates.push({
+        auth: cred.auth,
+        clientPayload: cred.clientPayload || null,
+        expiry: parseExpiryMs(cred.auth),
+        source: cred.source
+      });
+    }
+  }
+  if (vaultEntry?.auth?.refresh_token) {
+    candidates.push({
+      auth: vaultEntry.auth,
+      clientPayload: vaultEntry.clientPayload || null,
+      expiry: parseExpiryMs(vaultEntry.auth),
+      source: vaultEntry.capturedFrom || "vault"
+    });
+  } else if (vaultEntry?.clientPayload?.token?.refresh_token) {
+    candidates.push({
+      auth: vaultEntry.clientPayload.token,
+      clientPayload: vaultEntry.clientPayload,
+      expiry: parseExpiryMs(vaultEntry.clientPayload),
+      source: vaultEntry.capturedFrom || "vault"
+    });
+  }
+  return candidates;
 }
 
 function describePlan(plan) {
-  const name = typeof plan === "string" && plan.trim() ? plan.trim() : null;
+  const rawName = typeof plan === "string" && plan.trim() ? plan.trim() : null;
+  const name = rawName === "g1-ultra-tier" ? "Google AI Ultra" : rawName;
   const normalized = (name || "").replace(/[_-]+/g, " ").replace(/\s+/g, " ");
   const paid = /^(?:(?:google\s+)?ai\s+|antigravity\s+)?(pro|ultra|enterprise)\b/i.exec(normalized);
   const family = paid?.[1]?.toLowerCase() || (/^gemini\s+enterprise\b/i.test(normalized) ? "enterprise" : null);
@@ -612,6 +975,17 @@ function inspectElectronRestartState() {
   }
 }
 
+function resolveLoginPlan(matchingLogins) {
+  const order = ["plugin:antigravity", "antigravity", "plugin:agy-cli"];
+  for (const agent of order) {
+    const hit = matchingLogins.find(
+      (item) => item.agent === agent && typeof item.plan === "string" && item.plan.trim()
+    );
+    if (hit) return hit.plan.trim();
+  }
+  return null;
+}
+
 let agyVersionProbe = null;
 
 function detectInstalledAgyVersion({ refresh = false } = {}) {
@@ -652,11 +1026,23 @@ function usesSharedAgyKeychain(options) {
   return major > 1 || (major === 1 && minor >= 5);
 }
 
+function readStateInputs() {
+  return {
+    ...captureLiveClientAccounts(),
+    logins: readLogins(),
+    cliCache: readCliQuotaCache(),
+    quotas: readJsonSafe(PATHS.quotasJson, {}),
+    appStorage: readJsonSafe(PATHS.appStorage, {})
+  };
+}
+
 export function getFullState() {
-  const { vault, keychainPayload, cliPayload, liveLs } = captureLiveClientAccounts();
-  const logins = readLogins();
-  const quotas = readJsonSafe(PATHS.quotasJson, {});
-  const appStorage = readJsonSafe(PATHS.appStorage, {});
+  return buildState(readStateInputs());
+}
+
+function buildState(inputs, agyCliOnly = false) {
+  const { vault, keychainPayload, cliPayload, pluginAuth, pluginCredentials, liveLs,
+    logins, cliCache, quotas, appStorage } = inputs;
 
   const desktopKeychainEmail = keychainPayload?.id_token_email || null;
   const desktopUiEmail = appStorage?.["jetski.onboarding.lastLoginUsername"] || null;
@@ -669,51 +1055,94 @@ export function getFullState() {
   const cliUsesSharedLogin = usesSharedAgyKeychain();
   const cliEmail = (cliUsesSharedLogin ? desktopKeychainEmail : cliPayload?.id_token_email) || null;
 
-  const antigravityLogins = Array.isArray(logins)
-    ? logins.filter((item) => item && item.agent === "antigravity" && getLoginEmail(item))
-    : [];
-
-  const magpieFirst = antigravityLogins.find((item) => item.first) || antigravityLogins.find((item) => item.on) || null;
-  const magpieFirstEmail = getLoginEmail(magpieFirst);
+  const supportedLogins = logins.filter((item) =>
+    (agyCliOnly ? isMagpieAgyCliLogin(item, pluginAuth) : isSupportedLoginAgent(item?.agent)) &&
+    resolveLoginItemEmail(item, pluginCredentials));
+  const firstCandidates = agyCliOnly ? supportedLogins.filter((item) => item.on && !item.lapsed) : supportedLogins;
+  const magpieFirst = firstCandidates.find((item) => item.first) || firstCandidates.find((item) => item.on) || null;
+  const magpieFirstEmail = resolveLoginItemEmail(magpieFirst, pluginCredentials);
 
   const allEmails = new Set();
-  for (const item of antigravityLogins) {
-    allEmails.add(getLoginEmail(item));
+  for (const item of supportedLogins) {
+    allEmails.add(resolveLoginItemEmail(item, pluginCredentials));
   }
-  for (const email of Object.keys(vault.accounts || {})) {
-    allEmails.add(email);
+  if (!agyCliOnly) {
+    for (const cred of pluginCredentials.values()) {
+      if (cred?.email) allEmails.add(cred.email);
+    }
+    for (const email of Object.keys(vault.accounts || {})) {
+      allEmails.add(email);
+    }
+    if (desktopEmail) allEmails.add(desktopEmail);
+    if (desktopSavedEmail) allEmails.add(desktopSavedEmail);
+    if (cliEmail) allEmails.add(cliEmail);
   }
-  if (desktopEmail) allEmails.add(desktopEmail);
-  if (desktopSavedEmail) allEmails.add(desktopSavedEmail);
-  if (cliEmail) allEmails.add(cliEmail);
 
   const accounts = [];
   for (const email of allEmails) {
-    const loginEntry = antigravityLogins.find((item) => getLoginEmail(item) === email) || null;
-    const vaultEntry = vault.accounts?.[email] || null;
-    const quotaEntry = quotas?.[`antigravity/${email}`] || null;
-    const quotaSummary = summarizeQuotaEntry(quotaEntry);
-
-    const hasMagpieAuth = Boolean(loginEntry?.auth?.refresh_token || loginEntry?.auth?.access_token);
-    const hasVaultAuth = Boolean(vaultEntry?.auth?.refresh_token || vaultEntry?.clientPayload?.token?.refresh_token);
-    const isEligible = Boolean(
-      loginEntry?.project ||
-      loginEntry?.auth?.project ||
-      quotaSummary?.plan ||
-      !loginEntry
+    const matchingLogins = supportedLogins.filter(
+      (item) => resolveLoginItemEmail(item, pluginCredentials) === email
     );
-
-    const rawPlan =
-      quotaSummary?.plan ||
-      loginEntry?.plan ||
+    const loginEntry =
+      matchingLogins.find((item) => item.agent === "plugin:agy-cli") ||
+      matchingLogins.find((item) => item.agent === "plugin:antigravity") ||
+      matchingLogins[0] ||
       null;
+    const pluginCreds = collectPluginCredentialsForEmail(email, matchingLogins, pluginCredentials);
+    const vaultEntry = vault.accounts?.[email] || null;
+    const cliCacheEntry = findCliCacheEntry(cliCache, email);
+    const quotaSummary = resolveQuotaForEmail(email, quotas, cliCache, agyCliOnly ? ["agy-cli"] : undefined);
+
+    const credCandidates = collectCredentialCandidates(email, matchingLogins, pluginCredentials, vaultEntry);
+    const hasLegacyAccessOnly = matchingLogins.some(
+      (item) => item?.agent === "antigravity" && Boolean(item?.auth?.refresh_token || item?.auth?.access_token)
+    );
+    const hasCredentials = credCandidates.length > 0 || hasLegacyAccessOnly;
+
+    const loginPlan = resolveLoginPlan(matchingLogins);
+    const rawPlan = quotaSummary?.plan || loginPlan || null;
+
+    const hasPluginPresence =
+      matchingLogins.some((item) => isPluginLoginAgent(item.agent)) ||
+      pluginCreds.some((cred) => cred.source === "magpie-plugin-auth" || Boolean(cred.agyHome));
+    const legacyHasProject = matchingLogins.some(
+      (item) => item?.agent === "antigravity" && Boolean(item?.project || item?.auth?.project)
+    );
+    const pluginHasProject = pluginCreds.some((cred) => Boolean(cred.project));
+    const magpieDisabled = agyCliOnly && !matchingLogins.some((item) => item.on);
+    const magpieLapse = agyCliOnly && !magpieDisabled &&
+      matchingLogins.filter((item) => item.on).every((item) => item.lapsed);
+    const explicitlyIneligible = magpieDisabled || magpieLapse || cliCacheEntry?.eligible === false;
+    const isEligible = explicitlyIneligible
+      ? false
+      : matchingLogins.length === 0
+        ? true
+        : hasPluginPresence
+          ? true
+          : Boolean(legacyHasProject || pluginHasProject || quotaSummary?.plan || loginPlan);
 
     const planInfo = describePlan(rawPlan);
-    const tierLabel = !isEligible ? "不可用" : planInfo.name || "套餐未知";
+    const tierLabel = magpieDisabled ? "已停用" : !isEligible ? "不可用" : planInfo.name || "套餐未知";
+    const resolvedProject =
+      cliCacheEntry?.project ||
+      matchingLogins.find((item) => item?.project)?.project ||
+      matchingLogins.find((item) => item?.auth?.project)?.auth?.project ||
+      pluginCreds.find((cred) => cred.project)?.project ||
+      vaultEntry?.project ||
+      "aicode-consumers";
+    const agents = [...new Set(matchingLogins.map((item) => item.agent))];
+    const hasAgyCli =
+      agents.includes("plugin:agy-cli") ||
+      pluginCreds.some((cred) => cred.source === "agy-cli-home" || cred.source === "agy-cli-default");
+    const agyCliMode = hasAgyCli
+      ? pluginCreds.some((cred) => Boolean(cred.agyHome))
+        ? "isolated"
+        : "default"
+      : null;
 
     const accountObj = {
       email,
-      name: getLoginEmail(loginEntry) || email,
+      name: resolveLoginItemEmail(loginEntry, pluginCredentials) || email,
       plan: planInfo.name,
       tierLabel,
       planFamily: planInfo.family,
@@ -724,13 +1153,19 @@ export function getFullState() {
       isPro: planInfo.isPaid,
       planKnown: Boolean(planInfo.name),
       isEligible,
+      ineligibleReason: magpieDisabled
+        ? "已在 Magpie 停用"
+        : magpieLapse ? "登录已失效，请在 Magpie 重新登录" : !isEligible ? cliCacheEntry?.ineligibleReason || null : null,
       hasProject: isEligible,
-      project: loginEntry?.project || loginEntry?.auth?.project || vaultEntry?.project || "aicode-consumers",
-      inMagpie: Boolean(loginEntry),
+      project: resolvedProject,
+      agents,
+      agyCliMode,
+      quotaProvider: quotaSummary?.provider || null,
+      inMagpie: matchingLogins.length > 0,
       inVault: Boolean(vaultEntry),
-      hasCredentials: hasMagpieAuth || hasVaultAuth,
-      magpieOn: Boolean(loginEntry?.on),
-      magpieFirst: Boolean(loginEntry?.first),
+      hasCredentials,
+      magpieOn: matchingLogins.some((item) => Boolean(item.on)),
+      magpieFirst: matchingLogins.some((item) => Boolean(item.first)),
       activeDesktop: lsRunning && desktopRuntimeEmail === email,
       savedDesktop: desktopSavedEmail === email,
       pendingDesktop: desktopPending && desktopSavedEmail === email,
@@ -738,8 +1173,12 @@ export function getFullState() {
       activeDesktopUi: desktopUiEmail === email,
       activeCli: cliEmail === email,
       activeMagpieFirst: magpieFirstEmail === email,
-      capturedFrom: vaultEntry?.capturedFrom || null,
-      updatedAt: loginEntry?.seen || loginEntry?.updatedAt || vaultEntry?.capturedAt || null,
+      capturedFrom: vaultEntry?.capturedFrom || pluginCreds[0]?.source || null,
+      updatedAt:
+        matchingLogins.find((item) => item.seen)?.seen ||
+        matchingLogins.find((item) => item.updatedAt)?.updatedAt ||
+        vaultEntry?.capturedAt ||
+        null,
       quota: quotaSummary,
       score: 0
     };
@@ -809,10 +1248,13 @@ export function getFullState() {
   };
 }
 
-export function syncStateFile() {
+export function syncStateFile({ fullResult = false } = {}) {
   let state;
+  let fullState;
   try {
-    state = getFullState();
+    const inputs = readStateInputs();
+    state = buildState(inputs, true);
+    if (fullResult) fullState = buildState(inputs);
   } catch (err) {
     // 保留配置原件，并让页面显式呈现读取失败；下一轮同步可自动恢复。
     state = { generatedAt: new Date().toISOString(), error: sanitizeErrorMessage(err),
@@ -827,93 +1269,111 @@ export function syncStateFile() {
     ""
   ].join("\n");
   writeTextAtomic(STATE_JS_PATH, jsContent, 0o644);
-  return state;
+  return fullState || state;
 }
 
 function resolveAccountCredentials(email) {
-  const { vault } = captureLiveClientAccounts();
+  const { vault, pluginCredentials } = captureLiveClientAccounts();
   const logins = readLogins();
-  const loginEntry = Array.isArray(logins)
-    ? logins.find((item) => item && item.agent === "antigravity" && getLoginEmail(item) === email)
-    : null;
+  const matchingLogins = Array.isArray(logins)
+    ? logins.filter(
+        (item) => item && isSupportedLoginAgent(item.agent) && resolveLoginItemEmail(item, pluginCredentials) === email
+      )
+    : [];
   const vaultEntry = vault.accounts?.[email] || null;
+  const candidates = collectCredentialCandidates(email, matchingLogins, pluginCredentials, vaultEntry);
+  candidates.sort((a, b) => b.expiry - a.expiry);
+  const chosen = candidates[0] || null;
 
-  const loginExpiry = parseExpiryMs(loginEntry?.auth);
-  const vaultExpiry = parseExpiryMs(vaultEntry?.auth || vaultEntry?.clientPayload);
-
-  let chosenAuth = null;
-  if (loginEntry?.auth?.refresh_token && vaultEntry?.auth?.refresh_token) {
-    chosenAuth = loginExpiry >= vaultExpiry ? loginEntry.auth : vaultEntry.auth;
-  } else if (loginEntry?.auth?.refresh_token) {
-    chosenAuth = loginEntry.auth;
-  } else if (vaultEntry?.auth?.refresh_token) {
-    chosenAuth = vaultEntry.auth;
-  } else if (vaultEntry?.clientPayload?.token?.refresh_token) {
-    chosenAuth = vaultEntry.clientPayload.token;
-  }
-
-  if (!chosenAuth) {
+  if (!chosen?.auth?.refresh_token) {
     throw new Error(`未找到账号 ${email} 的可用 OAuth 凭证`);
   }
 
-  const clientPayload = toClientOAuthPayload(email, chosenAuth, vaultEntry?.clientPayload);
+  const clientPayload = toClientOAuthPayload(
+    email,
+    chosen.auth,
+    chosen.clientPayload || vaultEntry?.clientPayload
+  );
   return {
     email,
     clientPayload,
-    loginEntry,
+    loginEntry: matchingLogins[0] || null,
     vaultEntry
   };
 }
 
 export function importAccountToMagpie(email) {
   const logins = readLogins();
-  const { vault } = captureLiveClientAccounts();
+  const { vault, pluginCredentials } = captureLiveClientAccounts();
+  const cliCache = readCliQuotaCache();
   const quotas = readJsonSafe(PATHS.quotasJson, {});
-  const plan = summarizeQuotaEntry(quotas?.[`antigravity/${email}`])?.plan;
-  const vaultEntry = vault.accounts?.[email];
-  if (!vaultEntry || !vaultEntry.auth?.refresh_token) {
+  const plan = resolveQuotaForEmail(email, quotas, cliCache)?.plan || null;
+  const vaultEntry = vault.accounts?.[email] || null;
+  const pluginCreds = collectPluginCredentialsForEmail(email, [], pluginCredentials);
+  const pluginWithToken = pluginCreds.find((cred) => cred?.auth?.refresh_token) || null;
+  const authSource = vaultEntry?.auth?.refresh_token ? vaultEntry.auth : pluginWithToken?.auth || null;
+  const resolvedProject = vaultEntry?.project || pluginWithToken?.project || "aicode-consumers";
+
+  const existingPluginIdx = logins.findIndex(
+    (item) => item && isPluginLoginAgent(item.agent) && resolveLoginItemEmail(item, pluginCredentials) === email
+  );
+  if (existingPluginIdx < 0 && !authSource?.refresh_token) {
     throw new Error(`未找到账号 ${email} 的凭证`);
   }
 
   const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-  const existingIdx = logins.findIndex(
+  const existingLegacyIdx = logins.findIndex(
     (item) => item && item.agent === "antigravity" && getLoginEmail(item) === email
   );
-  const newAuth = {
-    access_token: vaultEntry.auth.access_token || "",
-    refresh_token: vaultEntry.auth.refresh_token,
-    expiry_date: vaultEntry.auth.expiry_date || Date.now() + 3599_000,
-    project: vaultEntry.project || "aicode-consumers"
-  };
 
-  if (existingIdx >= 0) {
-    logins[existingIdx] = {
-      ...logins[existingIdx],
-      user: email,
-      seen: nowIso,
-      on: true,
-      plan: plan || logins[existingIdx].plan || undefined,
-      project: logins[existingIdx].project || vaultEntry.project || "aicode-consumers",
-      auth: {
-        ...(logins[existingIdx].auth || {}),
-        ...newAuth
+  if (existingPluginIdx >= 0) {
+    for (const item of logins) {
+      if (item && isSupportedLoginAgent(item.agent) && resolveLoginItemEmail(item, pluginCredentials) === email) {
+        item.seen = nowIso;
+        item.on = true;
+        if (!item.user) item.user = email;
+        if (plan && item.agent !== "plugin:agy-cli") {
+          item.plan = plan;
+        }
       }
-    };
+    }
   } else {
-    logins.push({
-      id: crypto.randomBytes(8).toString("hex"),
-      agent: "antigravity",
-      user: email,
-      seen: nowIso,
-      on: true,
-      ...(plan ? { plan } : {}),
-      project: vaultEntry.project || "aicode-consumers",
-      auth: newAuth
-    });
+    const newAuth = {
+      access_token: authSource.access_token || "",
+      refresh_token: authSource.refresh_token,
+      expiry_date: authSource.expiry_date || Date.now() + 3599_000,
+      project: resolvedProject
+    };
+
+    if (existingLegacyIdx >= 0) {
+      logins[existingLegacyIdx] = {
+        ...logins[existingLegacyIdx],
+        user: email,
+        seen: nowIso,
+        on: true,
+        plan: plan || logins[existingLegacyIdx].plan || undefined,
+        project: logins[existingLegacyIdx].project || resolvedProject,
+        auth: {
+          ...(logins[existingLegacyIdx].auth || {}),
+          ...newAuth
+        }
+      };
+    } else {
+      logins.push({
+        id: crypto.randomBytes(8).toString("hex"),
+        agent: "antigravity",
+        user: email,
+        seen: nowIso,
+        on: true,
+        ...(plan ? { plan } : {}),
+        project: resolvedProject,
+        auth: newAuth
+      });
+    }
   }
 
   writeJsonAtomic(PATHS.loginsJson, logins, 0o600);
-  const state = syncStateFile();
+  const state = syncStateFile({ fullResult: true });
   return {
     ok: true,
     action: "import-magpie",
@@ -930,7 +1390,7 @@ export function setPreferences(patch = {}) {
     ...patch
   };
   saveVault(vault);
-  const state = syncStateFile();
+  const state = syncStateFile({ fullResult: true });
   const modeText = vault.preferences.onlyPro ? "已开启「仅显示已识别会员」" : "已显示全部可用账号";
   return {
     ok: true,
@@ -942,7 +1402,8 @@ export function setPreferences(patch = {}) {
 
 export function organizeAccounts({ onlyPro } = {}) {
   const logins = readLogins();
-  const { vault } = captureLiveClientAccounts();
+  const { vault, pluginCredentials } = captureLiveClientAccounts();
+  const cliCache = readCliQuotaCache();
   const quotas = readJsonSafe(PATHS.quotasJson, {});
 
   let importedCount = 0;
@@ -954,9 +1415,11 @@ export function organizeAccounts({ onlyPro } = {}) {
     // 1. Ensure all recognized paid accounts are imported into Magpie logins.json
     for (const [email, vEntry] of Object.entries(vault.accounts || {})) {
       if (!vEntry?.auth?.refresh_token) continue;
-      const plan = summarizeQuotaEntry(quotas?.[`antigravity/${email}`])?.plan;
+      const plan = resolveQuotaForEmail(email, quotas, cliCache)?.plan;
       if (!describePlan(plan).isPaid) continue;
-      const exists = logins.some((item) => item && item.agent === "antigravity" && getLoginEmail(item) === email);
+      const exists = logins.some(
+        (item) => item && isSupportedLoginAgent(item.agent) && resolveLoginItemEmail(item, pluginCredentials) === email
+      );
       if (!exists) {
         logins.push({
           id: crypto.randomBytes(8).toString("hex"),
@@ -977,13 +1440,22 @@ export function organizeAccounts({ onlyPro } = {}) {
       }
     }
 
-    // 2. Disable ineligible/unverified accounts & enrich plan labels
+    // 2. Disable ineligible legacy accounts & enrich plan labels from Magpie / agy-cli cache
     for (const item of logins) {
-      if (!item || item.agent !== "antigravity") continue;
-      const email = getLoginEmail(item);
+      if (!item || !isSupportedLoginAgent(item.agent)) continue;
+      const email = resolveLoginItemEmail(item, pluginCredentials);
       if (!email) continue;
-      const qEntry = quotas?.[`antigravity/${email}`];
-      const plan = summarizeQuotaEntry(qEntry)?.plan || item.plan || null;
+      if (isPluginLoginAgent(item.agent)) {
+        const prefix = item.agent === "plugin:agy-cli" ? "agy-cli" : "antigravity";
+        const quotaPlan =
+          summarizeQuotaEntry(findQuotaEntry(quotas, prefix, email))?.plan ||
+          (item.agent === "plugin:agy-cli" ? findCliCacheEntry(cliCache, email)?.plan || null : null);
+        if (quotaPlan) {
+          item.plan = quotaPlan;
+        }
+        continue;
+      }
+      const plan = resolveQuotaForEmail(email, quotas, cliCache)?.plan || item.plan || null;
       if (plan) {
         item.plan = plan;
       }
@@ -997,15 +1469,19 @@ export function organizeAccounts({ onlyPro } = {}) {
       }
     }
 
-    // 3. Sort antigravity accounts inside logins.json: Members first, then other eligible accounts, then ineligible
-    const agyItems = logins.filter((item) => item && item.agent === "antigravity");
-    const otherItems = logins.filter((item) => !item || item.agent !== "antigravity");
+    // 3. Sort supported accounts inside logins.json: Members first, then other eligible accounts, then ineligible
+    const agyItems = logins.filter((item) => item && isSupportedLoginAgent(item.agent));
+    const otherItems = logins.filter((item) => !item || !isSupportedLoginAgent(item.agent));
     agyItems.sort((a, b) => {
-      const aPaid = describePlan(a.plan).isPaid;
-      const bPaid = describePlan(b.plan).isPaid;
+      const aEmail = resolveLoginItemEmail(a, pluginCredentials);
+      const bEmail = resolveLoginItemEmail(b, pluginCredentials);
+      const aPlan = a.plan || resolveQuotaForEmail(aEmail, quotas, cliCache)?.plan || null;
+      const bPlan = b.plan || resolveQuotaForEmail(bEmail, quotas, cliCache)?.plan || null;
+      const aPaid = describePlan(aPlan).isPaid;
+      const bPaid = describePlan(bPlan).isPaid;
       if (aPaid !== bPaid) return aPaid ? -1 : 1;
-      const aElig = Boolean(a.project || a.auth?.project);
-      const bElig = Boolean(b.project || b.auth?.project);
+      const aElig = isPluginLoginAgent(a.agent) || Boolean(a.project || a.auth?.project || aPlan);
+      const bElig = isPluginLoginAgent(b.agent) || Boolean(b.project || b.auth?.project || bPlan);
       if (aElig !== bElig) return aElig ? -1 : 1;
       return 0;
     });
@@ -1021,7 +1497,7 @@ export function organizeAccounts({ onlyPro } = {}) {
   };
   saveVault(updatedVault);
 
-  const state = syncStateFile();
+  const state = syncStateFile({ fullResult: true });
   const details = [];
   if (importedCount > 0) details.push(`纳管 ${importedCount} 个本地会员账号`);
   if (disabledCount > 0) details.push(`停用 ${disabledCount} 个异常账号`);
@@ -1054,7 +1530,7 @@ function getCdpPageTarget() {
   }
 }
 
-function injectSmoothTransitionOverlaySync(targetEmail) {
+function injectSmoothTransitionOverlaySync(targetEmail, language) {
   const cdp = getCdpPageTarget();
   if (!cdp?.page?.webSocketDebuggerUrl) return null;
 
@@ -1068,6 +1544,10 @@ function injectSmoothTransitionOverlaySync(targetEmail) {
     // ignore
   }
 
+  const pendingTitle = language === "en" ? `Switching to ${targetEmail}` : `正在切换至 ${targetEmail}`;
+  const pendingDetail = language === "en"
+    ? "Reloading the desktop app. This window will refresh when ready…"
+    : "正在同步桌面端服务，界面将在就绪后自动刷新…";
   const overlayCode = `
     (() => {
       try {
@@ -1077,9 +1557,11 @@ function injectSmoothTransitionOverlaySync(targetEmail) {
         el.id = "__agy_switch_overlay__";
         el.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:rgba(19,19,19,0.92);backdrop-filter:blur(8px);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#f5f5f7;font-family:system-ui,-apple-system,sans-serif;transition:opacity 0.2s ease;";
         el.innerHTML = '<div style="width:36px;height:36px;border:3px solid rgba(255,255,255,0.14);border-top-color:#60a5fa;border-radius:50%;animation:agySpin 0.8s linear infinite;margin-bottom:14px;"></div>' +
-          '<div style="font-size:15px;font-weight:600;letter-spacing:0.2px;">正在切换至 ${String(targetEmail || "").replace(/['"<>]/g, "")}</div>' +
-          '<div style="font-size:12px;color:rgba(255,255,255,0.58);margin-top:6px;">正在同步桌面端服务，界面将在就绪后自动刷新…</div>' +
+          '<div data-title style="font-size:15px;font-weight:600;letter-spacing:0.2px;"></div>' +
+          '<div data-detail style="font-size:12px;color:rgba(255,255,255,0.58);margin-top:6px;"></div>' +
           '<style>@keyframes agySpin{to{transform:rotate(360deg)}}</style>';
+        el.querySelector("[data-title]").textContent = ${JSON.stringify(pendingTitle)};
+        el.querySelector("[data-detail]").textContent = ${JSON.stringify(pendingDetail)};
         document.body.appendChild(el);
       } catch {}
     })()
@@ -1250,7 +1732,7 @@ function spawnDesktopRecoveryWatcher(oldPid, savedRoute = "/") {
   }
 }
 
-export function reloadDesktopLanguageServer(targetEmail = "") {
+export function reloadDesktopLanguageServer(targetEmail = "", language) {
   const lsState = inspectElectronRestartState();
   const lsInfo = getRunningLanguageServerInfo();
 
@@ -1290,7 +1772,7 @@ export function reloadDesktopLanguageServer(targetEmail = "") {
   }
 
   try {
-    const savedRoute = injectSmoothTransitionOverlaySync(targetEmail);
+    const savedRoute = injectSmoothTransitionOverlaySync(targetEmail, language);
     execFileSync("kill", ["-TERM", String(lsInfo.pid)], {
       stdio: ["ignore", "ignore", "ignore"]
     });
@@ -1317,7 +1799,8 @@ export function switchAccount({
   email,
   target = "all",
   reloadDesktop = false,
-  syncMagpie = true
+  syncMagpie = true,
+  language
 } = {}) {
   if (!email || typeof email !== "string") {
     throw new Error("请指定要切换的目标邮箱账号");
@@ -1334,7 +1817,7 @@ export function switchAccount({
   const writesKeychain = switchesDesktop || sharedCliLogin;
 
   ensureInitialBackup();
-  captureLiveClientAccounts();
+  const { pluginCredentials } = captureLiveClientAccounts();
 
   const { clientPayload } = resolveAccountCredentials(email);
   const updatedTargets = [];
@@ -1367,12 +1850,12 @@ export function switchAccount({
     const logins = readLogins();
     if (Array.isArray(logins)) {
       const hasAccountInMagpie = logins.some(
-        (item) => item && item.agent === "antigravity" && getLoginEmail(item) === email
+        (item) => item && isSupportedLoginAgent(item.agent) && resolveLoginItemEmail(item, pluginCredentials) === email
       );
       if (hasAccountInMagpie) {
         for (const item of logins) {
-          if (item && item.agent === "antigravity") {
-            if (getLoginEmail(item) === email) {
+          if (item && isSupportedLoginAgent(item.agent)) {
+            if (resolveLoginItemEmail(item, pluginCredentials) === email) {
               item.first = true;
               item.on = true;
             } else if (item.first) {
@@ -1388,7 +1871,7 @@ export function switchAccount({
 
   let reloadResult = null;
   if (reloadDesktop && switchesDesktop) {
-    reloadResult = reloadDesktopLanguageServer(email);
+    reloadResult = reloadDesktopLanguageServer(email, language);
   }
 
   const vault = readVault();
@@ -1426,7 +1909,7 @@ export function switchAccount({
   };
   saveVault(vault);
 
-  const state = syncStateFile();
+  const state = syncStateFile({ fullResult: true });
   const pending = writesKeychain &&
     (Boolean(state.error) || (state.current.desktopRunning && state.current.desktopRuntimeEmail !== email));
   return {
@@ -1438,6 +1921,194 @@ export function switchAccount({
     message: pending ? `${summaryMsg} · 桌面端待生效` : summaryMsg,
     state
   };
+}
+
+function refreshMagpieQuota(user) {
+  const app = "/Applications/magpie.app/Contents/MacOS/magpie";
+  const command = fs.existsSync(app) ? app : "magpie";
+  return new Promise((resolve, reject) => {
+    execFile(command, ["quota", "refresh", "agy-cli", user, "--json"], {
+      encoding: "utf8", timeout: 55_000, maxBuffer: 1024 * 1024
+    }, (error, stdout, stderr) => {
+      if (error) {
+        if (error.code === "ENOENT") {
+          reject(new Error("找不到 Magpie 命令，无法刷新额度"));
+        } else if (error.killed || error.signal) {
+          reject(new Error("Magpie 额度刷新超时"));
+        } else {
+          reject(new Error("Magpie 未能刷新这个账号的额度"));
+        }
+        return;
+      }
+      try {
+        const entries = JSON.parse(stdout);
+        if (!Array.isArray(entries)) throw new Error("Magpie 返回了无效的额度数据");
+        const key = user.toLowerCase();
+        const quota = entries.find((entry) => entry?.provider === "agy-cli" &&
+          [entry.user, entry.alias].some((name) => typeof name === "string" && name.toLowerCase() === key));
+        if (!quota) throw new Error("Magpie 未返回这个账号的额度");
+        const cached = /(?:^|\n)read .+ ago: not asked again/.test(stderr);
+        resolve({ quota, cached });
+      } catch (err) {
+        reject(err instanceof SyntaxError ? new Error("Magpie 返回了无效的额度数据") : err);
+      }
+    });
+  });
+}
+
+export async function refreshCliAccounts({ force = false, now = () => Date.now() } = {}) {
+  const { pluginAuth, pluginCredentials } = captureLiveClientAccounts();
+  const cache = readCliQuotaCache();
+  const nowMs = now();
+  const attemptedAt = new Date(nowMs).toISOString();
+  const jobs = new Map();
+  let skipped = 0;
+
+  for (const login of readLogins()) {
+    if (!isMagpieAgyCliLogin(login, pluginAuth) || !login.on || login.lapsed) continue;
+    const email = resolveLoginItemEmail(login, pluginCredentials);
+    if (!email || jobs.has(email)) continue;
+
+    const home = getLoginHomeKey(login);
+    const prev = findCliCacheEntry(cache, email);
+    if (!force && prev?.providerHome === home) {
+      const fetchedMs = Date.parse(prev.fetchedAt || "");
+      if ((prev.retryAfter && nowMs < prev.retryAfter) ||
+          (!prev.error && Number.isFinite(fetchedMs) && nowMs - fetchedMs < CLI_QUOTA_TTL_MS)) {
+        skipped++;
+        continue;
+      }
+    }
+    jobs.set(email, { user: login.user || email, prev, home });
+  }
+
+  let refreshed = 0;
+  const updates = new Map();
+  const errors = [];
+  const pending = jobs.entries();
+  const workers = Array.from({ length: Math.min(jobs.size, 4) }, async () => {
+    for (const [email, { user, home, prev }] of pending) {
+      try {
+        const { quota, cached } = await refreshMagpieQuota(user);
+        if (quota.error) throw new Error(quota.error);
+        const readAt = quota.readAt || quota.asOf || attemptedAt;
+        const windows = Array.isArray(quota.windows) ? quota.windows : [];
+        updates.set(email, {
+          providerHome: home, fetchedAt: readAt, attemptedAt,
+          quota: { plan: quota.plan || null, readAt, windows }
+        });
+        if (cached || quota.readDeferred || quota.asOf) skipped++;
+        else refreshed++;
+      } catch (err) {
+        const message = sanitizeErrorMessage(err);
+        const sameLogin = !prev?.providerHome || prev.providerHome === home;
+        const keepPriorQuota = sameLogin && prev?.quota?.windows?.length > 0;
+        const failureCount = (sameLogin ? prev?.failureCount || 0 : 0) + 1;
+        const backoff = Math.min(CLI_BACKOFF_FIRST_MS * 2 ** Math.min(failureCount - 1, 4), CLI_BACKOFF_MAX_MS);
+        updates.set(email, {
+          providerHome: home, attemptedAt, failureCount, retryAfter: nowMs + backoff,
+          fetchedAt: keepPriorQuota ? prev.fetchedAt : attemptedAt,
+          quota: keepPriorQuota ? prev.quota : { readAt: attemptedAt, windows: [] },
+          error: keepPriorQuota ? null : message,
+          refreshError: keepPriorQuota ? message : null
+        });
+        errors.push({ email, error: message });
+      }
+    }
+  });
+
+  await Promise.all(workers);
+
+  if (updates.size) {
+    const latestCache = readCliQuotaCache();
+    for (const [email, entry] of updates) {
+      if ((latestCache.accounts[email]?.attemptedAt || "") <= entry.attemptedAt) {
+        latestCache.accounts[email] = entry;
+      }
+    }
+    saveCliQuotaCache(latestCache);
+  }
+
+  const state = syncStateFile();
+  const failed = errors.length;
+  const details = [`已同步 ${state.accounts.length} 个账号`];
+  if (refreshed) details.push(`已刷新 ${refreshed} 个账号的额度`);
+  if (skipped) details.push(`沿用 ${skipped} 个账号的近期额度`);
+  if (failed) details.push(`${failed} 个额度查询失败`);
+
+  return {
+    ok: failed < jobs.size || failed === 0,
+    refreshed,
+    skipped,
+    failed,
+    total: jobs.size,
+    errors,
+    message: details.join("，"),
+    state
+  };
+}
+
+const GITHUB_REPO_URL = "https://github.com/0xTotoroX/magpie-antigravity-switch";
+
+function openGitHubRepo() {
+  execFileSync("open", [GITHUB_REPO_URL], {
+    stdio: ["ignore", "ignore", "ignore"]
+  });
+  return {
+    ok: true,
+    action: "open-github",
+    url: GITHUB_REPO_URL,
+    message: "已在浏览器打开 GitHub 仓库，欢迎点亮 Star"
+  };
+}
+
+export async function executeCommandAsync(cmd) {
+  if (!cmd || typeof cmd !== "object" || !cmd.id) return null;
+  if (typeof cmd.ts === "number" && Math.abs(Date.now() - cmd.ts) > 30_000) {
+    return null;
+  }
+  const vault = readVault();
+  if (vault.lastExecutedCmdId === cmd.id || vault.lastSwitch?.cmdId === cmd.id) {
+    return null;
+  }
+  if (cmd.type !== "refresh") {
+    return executeCommandPayload(cmd);
+  }
+
+  try {
+    const refreshRes = await refreshCliAccounts({ force: true });
+    if (refreshRes.state?.error) throw new Error(refreshRes.state.error);
+    const updatedVault = readVault();
+    updatedVault.lastExecutedCmdId = cmd.id;
+    updatedVault.lastSwitch = {
+      ...(updatedVault.lastSwitch || {}),
+      cmdId: cmd.id,
+      at: new Date().toISOString(),
+      email: refreshRes.state?.current?.desktopEmail || null,
+      ok: refreshRes.ok !== false,
+      message: refreshRes.message
+    };
+    saveVault(updatedVault);
+    syncStateFile();
+    return refreshRes;
+  } catch (err) {
+    const cleanMsg = sanitizeErrorMessage(err);
+    const updatedVault = readVault();
+    updatedVault.lastExecutedCmdId = cmd.id;
+    updatedVault.lastSwitch = {
+      cmdId: cmd.id,
+      at: new Date().toISOString(),
+      email: null,
+      ok: false,
+      message: cleanMsg
+    };
+    saveVault(updatedVault);
+    syncStateFile();
+    return {
+      ok: false,
+      error: cleanMsg
+    };
+  }
 }
 
 export function executeCommandPayload(cmd) {
@@ -1457,21 +2128,22 @@ export function executeCommandPayload(cmd) {
         email: cmd.email,
         target: cmd.target || "all",
         reloadDesktop: Boolean(cmd.reloadDesktop),
-        syncMagpie: cmd.syncMagpie !== false
+        syncMagpie: cmd.syncMagpie !== false,
+        language: cmd.language
       });
     } else if (cmd.type === "import-magpie") {
       result = importAccountToMagpie(cmd.email);
-    } else if (cmd.type === "organize") {
-      result = organizeAccounts({ onlyPro: cmd.onlyPro });
     } else if (cmd.type === "set-preferences") {
       result = setPreferences(cmd.preferences || {});
     } else if (cmd.type === "reload-desktop") {
-      const reloadRes = reloadDesktopLanguageServer(getFullState().current.desktopSavedEmail || "");
+      const reloadRes = reloadDesktopLanguageServer(getFullState().current.desktopSavedEmail || "", cmd.language);
       result = {
         ok: reloadRes.reloaded,
         email: getFullState().current.desktopEmail,
         message: reloadRes.reason
       };
+    } else if (cmd.type === "open-github") {
+      result = openGitHubRepo();
     } else if (cmd.type === "refresh") {
       const state = syncStateFile();
       if (state.error) throw new Error(state.error);

@@ -12,7 +12,8 @@ import {
   PATHS,
   PLUGIN_DIR,
   PLUGIN_NAME,
-  executeCommandPayload,
+  executeCommandAsync,
+  refreshCliAccounts,
   syncStateFile
 } from "./core.mjs";
 
@@ -73,7 +74,7 @@ export function ensureBackgroundWatcher() {
   const existing = readLock();
   const currentSig = getCodeSignature();
   if (existing && isPidAlive(existing.pid)) {
-    if (existing.signature === currentSig) {
+    if (existing.script === __filename && existing.signature === currentSig) {
       return { started: false, pid: existing.pid };
     }
     try {
@@ -114,6 +115,23 @@ export function readPendingCommand(raw) {
 export function startInProcessWatcher() {
   let lastCmdId = null;
   let debounceTimer = null;
+  let cmdQueue = Promise.resolve();
+  let backgroundRefresh = null;
+  let lastCliRefreshAt = 0;
+
+  const triggerBackgroundRefresh = () => {
+    if (backgroundRefresh) return backgroundRefresh;
+    lastCliRefreshAt = Date.now();
+    backgroundRefresh = Promise.resolve()
+      .then(() => refreshCliAccounts({ force: false }))
+      .catch(() => {
+        // Non-fatal background refresh error
+      })
+      .finally(() => {
+        backgroundRefresh = null;
+      });
+    return backgroundRefresh;
+  };
 
   const checkPluginsCommand = () => {
     try {
@@ -122,7 +140,11 @@ export function startInProcessWatcher() {
       const cmd = readPendingCommand(raw);
       if (cmd && cmd.id && cmd.id !== lastCmdId) {
         lastCmdId = cmd.id;
-        executeCommandPayload(cmd);
+        cmdQueue = cmdQueue
+          .then(() => executeCommandAsync(cmd))
+          .catch(() => {
+            // ignore transient command execution errors
+          });
       }
     } catch {
       // ignore transient read errors
@@ -159,6 +181,8 @@ export function startInProcessWatcher() {
           if (
             filename === "plugins.json" ||
             filename === "logins.json" ||
+            filename === "plugin-auth.json" ||
+            filename === "antigravity-switch-cli-cache.json" ||
             filename === "quotas.json" ||
             filename === "antigravity-oauth-token" ||
             filename === "app_storage.json"
@@ -172,6 +196,10 @@ export function startInProcessWatcher() {
       // ignore missing directory
     }
   }
+
+  const initialRefreshTimer = setTimeout(() => {
+    triggerBackgroundRefresh();
+  }, 300);
 
   const interval = setInterval(() => {
     if (process.argv.includes("--daemon") && getCodeSignature() !== INITIAL_SIGNATURE) {
@@ -193,9 +221,13 @@ export function startInProcessWatcher() {
     } catch {
       // A transient state-file write failure must not stop future recovery.
     }
+    if (Date.now() - lastCliRefreshAt >= 60_000) {
+      triggerBackgroundRefresh();
+    }
   }, 4000);
 
   return () => {
+    clearTimeout(initialRefreshTimer);
     clearInterval(interval);
     for (const w of watchers) {
       try {
