@@ -2069,64 +2069,54 @@ function openGitHubRepo() {
   };
 }
 
-export async function executeCommandAsync(cmd) {
-  if (!cmd || typeof cmd !== "object" || !cmd.id) return null;
-  if (typeof cmd.ts === "number" && Math.abs(Date.now() - cmd.ts) > 30_000) {
-    return null;
-  }
+function isPendingCommand(cmd) {
+  if (!cmd || typeof cmd !== "object" || !cmd.id) return false;
+  if (typeof cmd.ts === "number" && Math.abs(Date.now() - cmd.ts) > 30_000) return false;
   const vault = readVault();
-  if (vault.lastExecutedCmdId === cmd.id || vault.lastSwitch?.cmdId === cmd.id) {
-    return null;
-  }
-  if (cmd.type !== "refresh") {
-    return executeCommandPayload(cmd);
-  }
+  return vault.lastExecutedCmdId !== cmd.id && vault.lastSwitch?.cmdId !== cmd.id;
+}
+
+function recordCommandResult(id, { email, ok, message }, { preservePrevious = true } = {}) {
+  const vault = readVault();
+  vault.lastExecutedCmdId = id;
+  vault.lastSwitch = {
+    ...(preservePrevious ? vault.lastSwitch : null),
+    cmdId: id,
+    at: new Date().toISOString(),
+    email,
+    ok,
+    message
+  };
+  saveVault(vault);
+  syncStateFile();
+}
+
+function recordCommandFailure(id, err, email = null) {
+  const message = sanitizeErrorMessage(err);
+  recordCommandResult(id, { email, ok: false, message }, { preservePrevious: false });
+  return { ok: false, error: message };
+}
+
+export async function executeCommandAsync(cmd) {
+  if (cmd?.type !== "refresh") return executeCommandPayload(cmd);
+  if (!isPendingCommand(cmd)) return null;
 
   try {
-    const refreshRes = await refreshCliAccounts({ force: true });
-    if (refreshRes.state?.error) throw new Error(refreshRes.state.error);
-    const updatedVault = readVault();
-    updatedVault.lastExecutedCmdId = cmd.id;
-    updatedVault.lastSwitch = {
-      ...(updatedVault.lastSwitch || {}),
-      cmdId: cmd.id,
-      at: new Date().toISOString(),
-      email: refreshRes.state?.current?.desktopEmail || null,
-      ok: refreshRes.ok !== false,
-      message: refreshRes.message
-    };
-    saveVault(updatedVault);
-    syncStateFile();
-    return refreshRes;
+    const result = await refreshCliAccounts({ force: true });
+    if (result.state?.error) throw new Error(result.state.error);
+    recordCommandResult(cmd.id, {
+      email: result.state?.current?.desktopEmail || null,
+      ok: result.ok !== false,
+      message: result.message
+    });
+    return result;
   } catch (err) {
-    const cleanMsg = sanitizeErrorMessage(err);
-    const updatedVault = readVault();
-    updatedVault.lastExecutedCmdId = cmd.id;
-    updatedVault.lastSwitch = {
-      cmdId: cmd.id,
-      at: new Date().toISOString(),
-      email: null,
-      ok: false,
-      message: cleanMsg
-    };
-    saveVault(updatedVault);
-    syncStateFile();
-    return {
-      ok: false,
-      error: cleanMsg
-    };
+    return recordCommandFailure(cmd.id, err);
   }
 }
 
 export function executeCommandPayload(cmd) {
-  if (!cmd || typeof cmd !== "object" || !cmd.id) return null;
-  if (typeof cmd.ts === "number" && Math.abs(Date.now() - cmd.ts) > 30_000) {
-    return null;
-  }
-  const vault = readVault();
-  if (vault.lastExecutedCmdId === cmd.id || vault.lastSwitch?.cmdId === cmd.id) {
-    return null;
-  }
+  if (!isPendingCommand(cmd)) return null;
 
   try {
     let result;
@@ -2163,35 +2153,13 @@ export function executeCommandPayload(cmd) {
       return null;
     }
 
-    const updatedVault = readVault();
-    updatedVault.lastExecutedCmdId = cmd.id;
-    updatedVault.lastSwitch = {
-      ...(updatedVault.lastSwitch || {}),
-      cmdId: cmd.id,
-      at: new Date().toISOString(),
+    recordCommandResult(cmd.id, {
       email: cmd.email || result?.email || null,
       ok: result?.ok !== false,
       message: result?.message || "操作完成"
-    };
-    saveVault(updatedVault);
-    syncStateFile();
+    });
     return result;
   } catch (err) {
-    const cleanMsg = sanitizeErrorMessage(err);
-    const updatedVault = readVault();
-    updatedVault.lastExecutedCmdId = cmd.id;
-    updatedVault.lastSwitch = {
-      cmdId: cmd.id,
-      at: new Date().toISOString(),
-      email: cmd.email || null,
-      ok: false,
-      message: cleanMsg
-    };
-    saveVault(updatedVault);
-    syncStateFile();
-    return {
-      ok: false,
-      error: cleanMsg
-    };
+    return recordCommandFailure(cmd.id, err, cmd.email || null);
   }
 }

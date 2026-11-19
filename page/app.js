@@ -19,8 +19,7 @@
 
   let currentState = globalThis.__AGY_SWITCH_STATE__ || null;
   let lastHandledSwitchId = currentState?.lastSwitch?.cmdId || currentState?.lastSwitch?.id || null;
-  let isBusy = false;
-  let isRefreshing = false;
+  let pendingCommandType = null;
   let lastToast = "";
 
   async function ensureMagpieBridge() {
@@ -160,7 +159,7 @@
     const quotaIssue = account.isEligible && (account.quota?.error || account.quota?.refreshError);
 
     const canSwitch = account.hasCredentials && account.isEligible;
-    const disabled = isBusy || Boolean(currentState?.error);
+    const disabled = pendingCommandType !== null || Boolean(currentState?.error);
     const cliSwitchHint = currentState?.current?.cliUsesSharedLogin
       ? t("cliShared")
       : t("cliNext");
@@ -228,7 +227,8 @@
   function render(state) {
     const btnRefresh = document.getElementById("btnRefresh");
     if (btnRefresh) {
-      btnRefresh.disabled = isBusy;
+      const isRefreshing = pendingCommandType === "refresh";
+      btnRefresh.disabled = pendingCommandType !== null;
       btnRefresh.setAttribute("aria-busy", String(isRefreshing));
       document.getElementById("refreshLabel").textContent = t(isRefreshing ? "refreshing" : "refresh");
     }
@@ -292,12 +292,12 @@
   }
 
   async function sendPluginCommand(cmdPayload) {
-    if (isBusy) return;
+    if (pendingCommandType !== null) return;
     const cmdId = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const fullCmd = { ...cmdPayload, id: cmdId, ts: Date.now(), language: i18n.locale() };
 
-    isBusy = true;
-    isRefreshing = cmdPayload.type === "refresh";
+    pendingCommandType = cmdPayload.type;
+    const isRefreshing = pendingCommandType === "refresh";
     if (isRefreshing) document.getElementById("toastBanner")?.classList.add("hidden");
     render(currentState);
 
@@ -327,8 +327,7 @@
     } catch (err) {
       showToast(`${t("commandFailed")}${i18n.separator()}${err.message || err}`, false);
     } finally {
-      isBusy = false;
-      isRefreshing = false;
+      pendingCommandType = null;
       render(currentState);
     }
   }

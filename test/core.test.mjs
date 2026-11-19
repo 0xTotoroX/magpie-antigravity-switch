@@ -714,3 +714,35 @@ test("Magpie refresh recognizes Ultra and reports Carbon separately", async () =
     ["Gemini 5h", 50], ["Gemini 4 Argon 7d", 75], ["Gemini 4 Carbon 5h", 0], ["Gemini 4 Carbon 7d", 40]
   ]);
 });
+
+test("refresh command results stay deduplicated and replace prior switch details on errors", async () => {
+  const email = "current@example.test";
+  const f = await fixture();
+  const { PATHS } = f.core;
+  f.write(PATHS.loginsJson, [{ agent: "plugin:agy-cli", user: email, on: true }]);
+  f.write(PATHS.pluginAuthJson, { "agy-cli": { type: "api", metadata: { email } } });
+  f.write(PATHS.vaultJson, { lastSwitch: { id: "previous-switch", target: "cli" } });
+  f.options.refreshQuota = () => ({ cards: [{
+    provider: "agy-cli", user: email, windows: [{ pool: "Gemini", name: "Gemini · 7 days", used: 25 }]
+  }] });
+
+  const cmd = { type: "refresh", id: "refresh-command", ts: Date.now() };
+  assert.equal(await f.core.executeCommandAsync({ ...cmd, ts: cmd.ts - 31_000 }), null);
+  assert.equal((await f.core.executeCommandAsync(cmd)).refreshed, 1);
+  assert.equal(await f.core.executeCommandAsync(cmd), null);
+  assert.equal(f.calls.filter(({ cmd: name }) => name === "magpie").length, 1);
+  const refreshed = f.read(PATHS.vaultJson);
+  assert.equal(refreshed.lastExecutedCmdId, cmd.id);
+  assert.equal(refreshed.lastSwitch.cmdId, cmd.id);
+  assert.equal(refreshed.lastSwitch.target, "cli");
+
+  f.fs.writeFileSync(PATHS.loginsJson, "{broken");
+  const failedId = "failed-refresh";
+  const failed = await f.core.executeCommandAsync({ ...cmd, id: failedId });
+  assert.equal(failed.ok, false);
+  const afterFailure = f.read(PATHS.vaultJson);
+  assert.equal(afterFailure.lastExecutedCmdId, failedId);
+  assert.equal(afterFailure.lastSwitch.ok, false);
+  assert.equal(afterFailure.lastSwitch.message, failed.error);
+  assert.equal(afterFailure.lastSwitch.target, undefined);
+});
