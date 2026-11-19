@@ -41,6 +41,7 @@
     verifyAccount: ["账号需验证或地区受限", "Account verification required or region unsupported"],
     noBridge: ["未检测到 Magpie 页面桥接，请通过 Magpie 侧边栏打开", "Open this plugin from the Magpie sidebar to connect it"],
     refreshTimeout: ["额度刷新暂未返回结果", "The quota refresh has not returned a result yet"],
+    quotaQueryTimeout: ["agy 额度查询超时", "The agy quota query timed out"],
     commandFailed: ["指令发送失败", "Could not send the command"]
   };
 
@@ -117,6 +118,9 @@
 
   function backend(value) {
     const message = String(value ?? "");
+    if (/^(?:agy usage query timed out\.?|context deadline exceeded)$/i.test(message.trim())) {
+      return text("quotaQueryTimeout");
+    }
     if (lang !== "en") return message;
     return backendMessages.reduce((result, [pattern, translation]) => result.replace(pattern, translation), message);
   }

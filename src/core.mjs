@@ -1929,7 +1929,9 @@ function refreshMagpieQuota(user) {
   const command = fs.existsSync(app) ? app : "magpie";
   return new Promise((resolve, reject) => {
     execFile(command, ["quota", "refresh", "agy-cli", user, "--json"], {
-      encoding: "utf8", timeout: 55_000, maxBuffer: 1024 * 1024
+      encoding: "utf8", timeout: 55_000, maxBuffer: 1024 * 1024,
+      // The provider supports an 18s allowance within Magpie's 20s usage call.
+      env: { AGY_BRIDGE_USAGE_TIMEOUT_MS: "18000", ...process.env }
     }, (error, stdout, stderr) => {
       if (error) {
         if (error.code === "ENOENT") {

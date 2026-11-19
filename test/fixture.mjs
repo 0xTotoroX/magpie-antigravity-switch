@@ -50,11 +50,11 @@ export async function fixture(options = {}) {
     }
   };
   const childProcess = {
-    execFile(cmd, args, _opts, callback) {
+    execFile(cmd, args, opts, callback) {
       calls.push({ cmd, args });
       Promise.resolve().then(() => {
         if (cmd !== "magpie" || !options.refreshQuota) throw new Error("Unexpected quota command");
-        return options.refreshQuota(args);
+        return options.refreshQuota(args, opts);
       }).then(({ cards, stderr = "" }) => callback(null, JSON.stringify(cards), stderr), callback);
     },
     execFileSync(cmd, args = []) {

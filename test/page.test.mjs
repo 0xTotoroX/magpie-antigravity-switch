@@ -279,3 +279,19 @@ test("refresh stays busy across unrelated updates until its own result arrives",
   assert.equal(p.el("refreshLabel").textContent, "Refresh");
   assert.equal(p.el("toastBanner").className, "toast is-error");
 });
+
+test("the quota timeout follows Magpie's language and keeps available readings visible", () => {
+  const state = baseState();
+  state.accounts = [{ email: "member@example.test", isEligible: true, isPaid: true, quota: {
+    refreshError: "agy usage query timed out.",
+    pools: [{ pool: "Gemini", window: "7 days", remaining: 72 }]
+  } }];
+  const p = page(state);
+  assert.match(p.el("accountList").innerHTML, /agy 额度查询超时/);
+  assert.match(p.el("accountList").innerHTML, /aria-valuenow="72"/);
+
+  state.accounts[0].quota.refreshError = "context deadline exceeded";
+  p.setLanguage("en");
+  assert.match(p.el("accountList").innerHTML, /The agy quota query timed out/);
+  assert.match(p.el("accountList").innerHTML, /aria-valuenow="72"/);
+});

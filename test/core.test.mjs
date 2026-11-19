@@ -593,8 +593,9 @@ test("refresh queries only enabled Magpie accounts and rereads the roster after 
     "agy-cli#off": { type: "oauth", refresh: "off-token", accountId: disabled.user },
     "agy-cli#removed": { type: "oauth", refresh: "removed-token", accountId: removed.user }
   });
-  f.options.refreshQuota = (args) => {
+  f.options.refreshQuota = (args, opts) => {
     assert.deepEqual(Array.from(args), ["quota", "refresh", "agy-cli", enabled.user, "--json"]);
+    assert.equal(opts.env.AGY_BRIDGE_USAGE_TIMEOUT_MS, "18000");
     f.write(loginsJson, [disabled]);
     return { cards: [{ provider: "agy-cli", user: enabled.user, plan: "Google AI Pro",
       windows: [{ pool: "Gemini", name: "Gemini · 7 days", used: 25 }] }] };
