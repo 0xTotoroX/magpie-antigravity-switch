@@ -1,6 +1,6 @@
 /*
  * [INPUT]: Magpie 主题变量与账号分组、五窗口额度页面结构。
- * [OUTPUT]: Magpie 列表、行内登录标签及额度布局。
+ * [OUTPUT]: Magpie 背景、刷新反馈、账号列表与额度布局。
  * [POS]: Antigravity Switch 页面唯一样式入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -51,11 +51,24 @@ html {
   color-scheme: light dark;
 }
 
+/* WebKit gives the iframe an opaque canvas if its color scheme differs from the host's. */
+html[data-theme] {
+  background: transparent;
+  color-scheme: normal !important;
+}
+
+html[data-theme="dark"] body {
+  color-scheme: dark;
+}
+
+html[data-theme="light"] body {
+  color-scheme: light;
+}
+
 body {
   min-height: 100%;
   width: 100%;
   font-family: var(--magpie-font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif);
-  background: var(--bg);
   color: var(--text);
   font-size: 13px;
   line-height: 1.45;
@@ -144,6 +157,37 @@ body {
 
 .toolbar .btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--text) 5%, var(--bg));
+}
+
+#btnRefresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-inline-size: 116px;
+}
+
+.refresh-icon {
+  flex: none;
+}
+
+#btnRefresh[aria-busy="true"] {
+  opacity: 1;
+  color: var(--primary);
+}
+
+#btnRefresh[aria-busy="true"] .refresh-icon {
+  animation: refresh-spin 0.9s linear infinite;
+}
+
+@keyframes refresh-spin {
+  to { transform: rotate(1turn); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #btnRefresh[aria-busy="true"] .refresh-icon {
+    animation: none;
+  }
 }
 
 .btn {

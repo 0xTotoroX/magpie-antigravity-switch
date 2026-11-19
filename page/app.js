@@ -226,6 +226,13 @@
   }
 
   function render(state) {
+    const btnRefresh = document.getElementById("btnRefresh");
+    if (btnRefresh) {
+      btnRefresh.disabled = isBusy;
+      btnRefresh.setAttribute("aria-busy", String(isRefreshing));
+      document.getElementById("refreshLabel").textContent = t(isRefreshing ? "refreshing" : "refresh");
+    }
+
     if (!state) return;
     const hadStateError = Boolean(currentState?.error);
     currentState = state;
@@ -236,12 +243,6 @@
 
     const desktopNotice = document.getElementById("desktopNotice");
     desktopNotice?.classList.toggle("hidden", Boolean(state.error) || cur.desktopStatus !== "unknown");
-
-    const btnRefresh = document.getElementById("btnRefresh");
-    if (btnRefresh) {
-      btnRefresh.disabled = isBusy;
-      btnRefresh.textContent = t(isRefreshing ? "refreshing" : "refresh");
-    }
 
     const allAccounts = Array.isArray(state.accounts) ? state.accounts : [];
     const visibleAccounts = allAccounts.filter((account) => account.isEligible);
@@ -267,7 +268,6 @@
     const incomingSwitchId = state.lastSwitch?.cmdId || state.lastSwitch?.id || null;
     if (!state.error && incomingSwitchId && incomingSwitchId !== lastHandledSwitchId) {
       lastHandledSwitchId = incomingSwitchId;
-      isBusy = false;
       showToast(state.lastSwitch.message, state.lastSwitch.ok !== false);
     }
   }
@@ -292,11 +292,13 @@
   }
 
   async function sendPluginCommand(cmdPayload) {
+    if (isBusy) return;
     const cmdId = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const fullCmd = { ...cmdPayload, id: cmdId, ts: Date.now(), language: i18n.locale() };
 
     isBusy = true;
     isRefreshing = cmdPayload.type === "refresh";
+    if (isRefreshing) document.getElementById("toastBanner")?.classList.add("hidden");
     render(currentState);
 
     try {
@@ -309,8 +311,6 @@
         const noBridgeMsg = cmdPayload.type === "open-github"
            ? "https://github.com/0xTotoroX/magpie-antigravity-switch"
           : t("noBridge");
-        isBusy = false;
-        render(currentState);
         showToast(noBridgeMsg, cmdPayload.type === "open-github");
         return;
       }
@@ -321,11 +321,7 @@
       while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, pollMs));
         await pollStateScript();
-        if (lastHandledSwitchId === cmdId) {
-          isBusy = false;
-          render(currentState);
-          return;
-        }
+        if (lastHandledSwitchId === cmdId) return;
       }
       if (isRefreshing) showToast(t("refreshTimeout"), false);
     } catch (err) {
@@ -342,9 +338,7 @@
     if (!target) return;
 
     if (target.closest("#btnGitHubStar")) {
-      if (!isBusy) {
-        sendPluginCommand({ type: "open-github" });
-      }
+      sendPluginCommand({ type: "open-github" });
       return;
     }
 

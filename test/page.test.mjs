@@ -5,28 +5,49 @@ import vm from "node:vm";
 import path from "node:path";
 import { project } from "./fixture.mjs";
 
-function page(state, language = "zh-CN") {
+function page(state, language = "zh-CN", send) {
   const elements = new Map();
+  let click;
+  const timers = [];
+  class Element {
+    closest(selector) { return selector === "#btnRefresh" ? this : null; }
+  }
   const document = {
     getElementById(id) {
       if (!elements.has(id)) {
         const classes = new Set();
+        const attributes = new Map();
         elements.set(id, { textContent: "", innerHTML: "", disabled: false, className: "", title: "",
+          setAttribute: (name, value) => attributes.set(name, value),
+          getAttribute: (name) => attributes.get(name),
           classList: { add: c => classes.add(c), remove: c => classes.delete(c),
             toggle: (c, on) => on ? classes.add(c) : classes.delete(c), contains: c => classes.has(c) }
         });
       }
       return elements.get(id);
     },
-    addEventListener() {}
+    addEventListener(type, handler) { if (type === "click") click = handler; },
+    createElement: () => ({ remove() {} }),
+    body: { appendChild: (script) => script.onload() }
   };
   let localeChanged;
   const magpie = { theme: { lang: language }, onTheme: (callback) => { localeChanged = callback; } };
-  const context = vm.createContext({ document, magpie, setInterval() {}, __AGY_SWITCH_STATE__: state });
+  if (send) magpie.options = { set: send };
+  const context = vm.createContext({
+    document, magpie, Element,
+    setInterval() {}, setTimeout: (fn) => timers.push(fn),
+    __AGY_SWITCH_STATE__: state
+  });
   vm.runInContext(fs.readFileSync(path.join(project, "page/i18n.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(project, "page/app.js"), "utf8"), context);
   return { el: id => document.getElementById(id), render: state => context.__AGY_SWITCH_ON_STATE__(state),
-    setLanguage: (lang) => localeChanged({ lang }) };
+    setLanguage: (lang) => localeChanged({ lang }),
+    clickRefresh: () => click({ target: new Element() }),
+    poll: (state) => {
+      context.__AGY_SWITCH_STATE__ = state;
+      timers.shift()();
+    }
+  };
 }
 const baseState = () => ({ current: {}, counts: { pro: 0, free: 0, unknown: 0, ineligible: 0 }, accounts: [], preferences: { onlyPro: false } });
 
@@ -202,7 +223,7 @@ test("the page follows Magpie language changes and leaves provider plans intact"
       resetsAt: new Date(Date.now()+7200_000).toISOString() }] }
   }];
   const p = page(state, "en-US");
-  assert.equal(p.el("btnRefresh").textContent, "Refresh");
+  assert.equal(p.el("refreshLabel").textContent, "Refresh");
   let html = p.el("accountList").innerHTML;
   assert.match(html, /Paid accounts/);
   assert.match(html, /Magpie preferred/);
@@ -216,7 +237,7 @@ test("the page follows Magpie language changes and leaves provider plans intact"
   p.render({ ...state, lastSwitch: { id: "refresh", message: "已同步 1 个账号，已刷新 1 个账号的额度", ok: true } });
   assert.equal(p.el("toastBanner").textContent, "Synced 1 account, refreshed quotas for 1 account");
   p.setLanguage("zh-CN");
-  assert.equal(p.el("btnRefresh").textContent, "刷新");
+  assert.equal(p.el("refreshLabel").textContent, "刷新");
   assert.match(p.el("accountList").innerHTML, /Magpie 首选/);
   assert.equal(p.el("toastBanner").textContent, "已同步 1 个账号，已刷新 1 个账号的额度");
 });
@@ -229,4 +250,32 @@ test("English shows recoverable configuration errors and disabled provider statu
   assert.match(p.el("unavailableSummary").textContent, /Unavailable accounts/);
   assert.match(p.el("unavailableList").innerHTML, /Disabled in Magpie/);
   assert.doesNotMatch(p.el("unavailableList").innerHTML, /\p{Script=Han}/u);
+});
+
+
+test("refresh stays busy across unrelated updates until its own result arrives", async () => {
+  const state = baseState();
+  const commands = [];
+  const p = page(state, "en", ({ cmd }) => commands.push(cmd));
+  const btn = p.el("btnRefresh");
+
+  p.clickRefresh();
+  p.clickRefresh();
+  assert.equal(btn.getAttribute("aria-busy"), "true");
+  assert.equal(btn.disabled, true);
+  assert.equal(p.el("refreshLabel").textContent, "Refreshing…");
+
+  await new Promise(setImmediate);
+  assert.equal(commands.length, 1);
+  p.poll({ ...state, lastSwitch: { id: "other", message: "Another result" } });
+  await new Promise(setImmediate);
+  assert.equal(btn.getAttribute("aria-busy"), "true");
+  assert.equal(btn.disabled, true);
+
+  p.poll({ ...state, lastSwitch: { cmdId: commands[0].id, message: "额度查询失败", ok: false } });
+  await new Promise(setImmediate);
+  assert.equal(btn.getAttribute("aria-busy"), "false");
+  assert.equal(btn.disabled, false);
+  assert.equal(p.el("refreshLabel").textContent, "Refresh");
+  assert.equal(p.el("toastBanner").className, "toast is-error");
 });
