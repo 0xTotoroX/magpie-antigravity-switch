@@ -64,11 +64,12 @@ export async function fixture(options = {}) {
             throw new Error("fixture ACL authorization denied");
           }
           if (options.failBeforeWrite || (!isReplacement && options.rollbackFails)) throw new Error("fixture write denied");
-          keychain = args[args.indexOf("-w") + 1];
+          if (!options.ignoreKeychainWrite) keychain = args[args.indexOf("-w") + 1];
           if (isReplacement && options.failAfterWrite) throw new Error("fixture write failed after data changed");
           return "";
         }
       }
+      if (cmd === "agy" && args[0] === "--version" && options.agyVersion) return options.agyVersion;
       if (cmd === "ps") return (options.liveStatus || options.running)
         ? "fixture 4242 0 0 0 0 ?? S 0:00 /Applications/Antigravity.app/Contents/Resources/bin/language_server --csrf_token abc-def" : "";
       if (cmd === "lsof") return "server 4242 fixture TCP 127.0.0.1:40001 (LISTEN)";
@@ -81,7 +82,7 @@ export async function fixture(options = {}) {
     spawn() { throw new Error("Unexpected spawn blocked"); }
   };
   if (options.desktopInstalled) dirs.add("/Applications/Antigravity.app/Contents/Resources/bin/language_server");
-  const context = vm.createContext({ Buffer, console, URL, process: { pid: 5555, execPath: process.execPath, argv: [] } });
+  const context = vm.createContext({ Buffer, console, URL, process: { pid: 5555, execPath: process.execPath, argv: [], platform: "darwin", env: options.env || {} } });
   const dependencies = {
     "node:fs": { default: mockFs }, "node:path": { default: path },
     "node:os": { default: { homedir: () => "/fixture-only" } },

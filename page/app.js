@@ -161,6 +161,9 @@
 
     const canSwitch = account.hasCredentials && account.isEligible;
     const disabled = isBusy || Boolean(currentState?.error);
+    const cliSwitchHint = currentState?.current?.cliUsesSharedLogin
+      ? "新启动的 CLI 和桌面端共用此登录"
+      : "供新启动的 CLI 使用";
 
     let actionButtons = "";
     if (canSwitch) {
@@ -175,7 +178,7 @@
           <button type="button" class="btn btn-primary" data-action="switch-all" data-email="${escapeHtml(account.email)}" ${disabled ? "disabled" : ""}>
             切换
           </button>
-          <button type="button" class="btn btn-ghost" data-action="switch-cli" data-email="${escapeHtml(account.email)}" title="仅切换 CLI，不打断桌面端窗口" ${disabled ? "disabled" : ""}>
+          <button type="button" class="btn btn-ghost" data-action="switch-cli" data-email="${escapeHtml(account.email)}" title="${cliSwitchHint}" ${disabled ? "disabled" : ""}>
             仅 CLI
           </button>
         `;
@@ -263,7 +266,10 @@
     }
 
     const cliEmailEl = document.getElementById("curCliEmail");
-    if (cliEmailEl) cliEmailEl.textContent = cur.cliEmail || "未登录";
+    if (cliEmailEl) {
+      cliEmailEl.textContent = cur.cliEmail || "未登录";
+      cliEmailEl.title = cur.cliUsesSharedLogin ? "新启动的 CLI 使用钥匙串中的账号" : "";
+    }
 
     const magpieEmailEl = document.getElementById("curMagpieEmail");
     if (magpieEmailEl) magpieEmailEl.textContent = cur.magpieFirstEmail || "未设置";

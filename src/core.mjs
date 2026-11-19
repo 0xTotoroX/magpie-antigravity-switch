@@ -38,6 +38,7 @@ export const PATHS = {
 const KEYCHAIN_SERVICE = "gemini";
 const KEYCHAIN_ACCOUNT = "antigravity";
 const KEYCHAIN_PREFIX = "go-keyring-base64:";
+const AGY_VERSION_TTL_MS = 60_000;
 const LANGUAGE_SERVER_PATTERN = "/Applications/Antigravity.app/Contents/Resources/bin/language_server";
 const RELOAD_WINDOW_MS = 65_000;
 const MAX_RELOADS_PER_WINDOW = 2;
@@ -611,6 +612,46 @@ function inspectElectronRestartState() {
   }
 }
 
+let agyVersionProbe = null;
+
+function detectInstalledAgyVersion({ refresh = false } = {}) {
+  if (!refresh && agyVersionProbe && Date.now() < agyVersionProbe.expiresAt) {
+    return agyVersionProbe.version;
+  }
+  const candidates = [
+    "agy",
+    path.join(HOME, ".local", "bin", "agy"),
+    "/opt/homebrew/bin/agy",
+    "/usr/local/bin/agy",
+    path.join(HOME, ".local", "share", "magpie-agy-cli", "agy")
+  ];
+  for (const bin of candidates) {
+    try {
+      if (bin !== "agy" && !fs.existsSync(bin)) continue;
+      const output = execFileSync(bin, ["--version"], {
+        encoding: "utf8",
+        timeout: 2000,
+        stdio: ["ignore", "pipe", "ignore"]
+      });
+      const version = /^(\d+\.\d+\.\d+)/.exec(output.trim())?.[1];
+      if (version) {
+        agyVersionProbe = { version, expiresAt: Date.now() + AGY_VERSION_TTL_MS };
+        return version;
+      }
+    } catch {
+      // 继续检查已知的安装位置。
+    }
+  }
+  agyVersionProbe = { version: null, expiresAt: Date.now() + AGY_VERSION_TTL_MS };
+  return null;
+}
+
+function usesSharedAgyKeychain(options) {
+  if (process.platform !== "darwin" || process.env.SSH_CONNECTION) return false;
+  const [major, minor] = (detectInstalledAgyVersion(options) || "").split(".").map(Number);
+  return major > 1 || (major === 1 && minor >= 5);
+}
+
 export function getFullState() {
   const { vault, keychainPayload, cliPayload, liveLs } = captureLiveClientAccounts();
   const logins = readLogins();
@@ -625,7 +666,8 @@ export function getFullState() {
   const desktopEmail = lsRunning ? desktopRuntimeEmail : desktopSavedEmail;
   const desktopPending = Boolean(lsRunning && desktopSavedEmail && desktopRuntimeEmail !== desktopSavedEmail);
   const desktopStatus = !lsRunning ? "stopped" : !desktopRuntimeEmail ? "unknown" : desktopPending ? "pending" : "running";
-  const cliEmail = cliPayload?.id_token_email || null;
+  const cliUsesSharedLogin = usesSharedAgyKeychain();
+  const cliEmail = (cliUsesSharedLogin ? desktopKeychainEmail : cliPayload?.id_token_email) || null;
 
   const antigravityLogins = Array.isArray(logins)
     ? logins.filter((item) => item && item.agent === "antigravity" && getLoginEmail(item))
@@ -751,6 +793,7 @@ export function getFullState() {
       desktopConsistent: (!desktopKeychainEmail || !desktopUiEmail || desktopKeychainEmail === desktopUiEmail) &&
         (!lsRunning || Boolean(desktopRuntimeEmail && desktopRuntimeEmail === desktopSavedEmail)),
       cliEmail,
+      cliUsesSharedLogin,
       magpieFirstEmail,
       desktopRunning: lsRunning
     },
@@ -1281,10 +1324,14 @@ export function switchAccount({
   }
 
   if (!["all", "desktop", "cli"].includes(target)) throw new Error("无效切换目标，请使用 all、desktop 或 cli");
+  const switchesDesktop = target !== "cli";
+  const switchesCli = target !== "desktop";
   // 在任何凭据写入前检查所有会写回的配置。
   if (syncMagpie) readLogins();
-  const appStorage = (target === "all" || target === "desktop")
+  const appStorage = switchesDesktop
     ? readJsonForUpdate(PATHS.appStorage, {}, isRecord) : null;
+  const sharedCliLogin = switchesCli && usesSharedAgyKeychain({ refresh: true });
+  const writesKeychain = switchesDesktop || sharedCliLogin;
 
   ensureInitialBackup();
   captureLiveClientAccounts();
@@ -1292,8 +1339,15 @@ export function switchAccount({
   const { clientPayload } = resolveAccountCredentials(email);
   const updatedTargets = [];
 
-  if (target === "all" || target === "desktop") {
+  if (writesKeychain) {
     writeKeychainAuth(clientPayload);
+    const saved = parseKeychainSecret(readKeychainRaw({ strict: true }));
+    if (saved?.id_token_email !== clientPayload.id_token_email) {
+      throw new Error("macOS 钥匙串未确认目标账号，请检查登录状态后重试");
+    }
+  }
+
+  if (switchesDesktop) {
     if (appStorage && typeof appStorage === "object") {
       appStorage["jetski.onboarding.lastLoginUsername"] = email;
       writeJsonAtomic(PATHS.appStorage, appStorage, 0o600);
@@ -1301,9 +1355,11 @@ export function switchAccount({
     updatedTargets.push("桌面端");
   }
 
-  if (target === "all" || target === "cli") {
-    writeJsonAtomic(PATHS.cliToken, clientPayload, 0o600);
-    writeJsonAtomic(PATHS.standaloneToken, clientPayload, 0o600);
+  if (switchesCli) {
+    if (switchesDesktop || !sharedCliLogin) {
+      writeJsonAtomic(PATHS.cliToken, clientPayload, 0o600);
+      writeJsonAtomic(PATHS.standaloneToken, clientPayload, 0o600);
+    }
     updatedTargets.push("CLI");
   }
 
@@ -1331,7 +1387,7 @@ export function switchAccount({
   }
 
   let reloadResult = null;
-  if (reloadDesktop && (target === "all" || target === "desktop")) {
+  if (reloadDesktop && switchesDesktop) {
     reloadResult = reloadDesktopLanguageServer(email);
   }
 
@@ -1352,6 +1408,7 @@ export function switchAccount({
 
   const summaryMsg = [
     `已保存 ${email} 的登录设置（${updatedTargets.join(" + ")}）`,
+    sharedCliLogin ? "· 新启动的 CLI 使用此账号" : "",
     reloadResult?.reason ? `· ${reloadResult.reason}` : ""
   ]
     .filter(Boolean)
@@ -1370,7 +1427,7 @@ export function switchAccount({
   saveVault(vault);
 
   const state = syncStateFile();
-  const pending = (target === "all" || target === "desktop") &&
+  const pending = writesKeychain &&
     (Boolean(state.error) || (state.current.desktopRunning && state.current.desktopRuntimeEmail !== email));
   return {
     ok: true,

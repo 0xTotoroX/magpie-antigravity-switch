@@ -44,6 +44,15 @@ test("#5 page shows unknown runtime identity and saved offline identity distinct
   p.render({ ...state, current: { desktopEmail: "saved@example.test", desktopSavedEmail: "saved@example.test", desktopStatus: "stopped" } });
   assert.match(p.el("curDesktopEmail").textContent, /已保存，未运行/);
 });
+test("the CLI-only control describes the shared login for recent local agy", () => {
+  const state = baseState();
+  state.current = { cliEmail: "old@example.test", cliUsesSharedLogin: true };
+  state.accounts = [{ email: "next@example.test", isPaid: true, isEligible: true, hasCredentials: true }];
+  const p = page(state);
+  assert.equal(p.el("curCliEmail").title, "新启动的 CLI 使用钥匙串中的账号");
+  assert.match(p.el("accountList").innerHTML, /title="新启动的 CLI 和桌面端共用此登录"/);
+});
+
 test("#8 page does not describe an unknown quota or plan as normal or free", () => {
   const state = baseState();
   state.preferences.onlyPro = false;

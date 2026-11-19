@@ -121,6 +121,54 @@ test("#4 file read failure does not mark the backup complete", async () => {
   assert.equal(f.fs.existsSync(f.core.PATHS.vaultJson), false);
 });
 
+test("CLI-only switch uses and confirms the shared Keychain for local agy 1.5", async () => {
+  const old = "old@example.test", next = "next@example.test";
+  const f = await fixture({ agyVersion: "1.5.12", keychain: auth(old), liveStatus: live(old) });
+  const p = f.core.PATHS;
+  f.write(p.loginsJson, [login(old), login(next)]);
+  f.write(p.cliToken, auth("legacy@example.test"));
+  f.write(p.standaloneToken, auth("legacy@example.test"));
+  f.write(p.appStorage, { "jetski.onboarding.lastLoginUsername": old });
+  assert.equal(f.core.getFullState().current.cliEmail, old);
+
+  const result = f.core.switchAccount({ email: next, target: "cli", reloadDesktop: true });
+  assert.equal(f.keychain().id_token_email, next);
+  assert.equal(result.state.current.cliEmail, next);
+  assert.equal(result.state.current.cliUsesSharedLogin, true);
+  assert.equal(result.state.current.desktopRuntimeEmail, old);
+  assert.equal(result.pending, true);
+  assert.equal(result.reloadResult, null);
+  assert.equal(f.read(p.appStorage)["jetski.onboarding.lastLoginUsername"], old);
+  assert.equal(f.read(p.cliToken).id_token_email, "legacy@example.test");
+  assert.equal(f.read(p.standaloneToken).id_token_email, "legacy@example.test");
+  assert.equal(f.read(p.loginsJson).find(entry => entry.user === next).first, true);
+});
+
+test("older agy and remote SSH sessions retain CLI file-based switching", async () => {
+  for (const options of [{ agyVersion: "1.4.9" }, { agyVersion: "1.5.12", env: { SSH_CONNECTION: "remote" } }]) {
+    const old = "old@example.test", next = "next@example.test";
+    const f = await fixture({ ...options, keychain: auth(old) });
+    const p = f.core.PATHS;
+    f.write(p.loginsJson, [login(next)]);
+    const result = f.core.switchAccount({ email: next, target: "cli" });
+    assert.equal(f.keychain().id_token_email, old);
+    assert.equal(f.read(p.cliToken).id_token_email, next);
+    assert.equal(f.read(p.standaloneToken).id_token_email, next);
+    assert.equal(result.state.current.cliEmail, next);
+    assert.equal(result.state.current.cliUsesSharedLogin, false);
+  }
+});
+
+test("CLI-only switch leaves preferences alone if the Keychain does not confirm the account", async () => {
+  const old = "old@example.test", next = "next@example.test";
+  const f = await fixture({ agyVersion: "1.5.12", keychain: auth(old), ignoreKeychainWrite: true });
+  const logins = [{ ...login(old), first: true }, login(next)];
+  f.write(f.core.PATHS.loginsJson, logins);
+  assert.throws(() => f.core.switchAccount({ email: next, target: "cli" }), /钥匙串未确认目标账号/);
+  assert.deepEqual(f.read(f.core.PATHS.loginsJson), logins);
+  assert.equal(f.core.getFullState().current.cliEmail, old);
+});
+
 test("#5 cooldown keeps running identity distinct from pending credentials", async () => {
   const old = "old@example.test", next = "next@example.test";
   const f = await fixture({ keychain: auth(old), liveStatus: live(old) });
