@@ -1,6 +1,6 @@
 /*
  * [INPUT]: Magpie 主题变量与账号分组、五窗口额度页面结构。
- * [OUTPUT]: 帳票布局、宽屏额度列位及窄屏模型分组。
+ * [OUTPUT]: Magpie 列表样式、宽屏额度列位及窄屏模型分组。
  * [POS]: Antigravity Switch 页面唯一样式入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -8,6 +8,7 @@
   color-scheme: light dark;
   --bg: var(--magpie-bg, #f6f7f9);
   --card: var(--magpie-card, #ffffff);
+  --surface-radius: 12px;
   --text: var(--magpie-fg, #18181b);
   --muted: var(--magpie-muted, #71717a);
   --border: var(--magpie-line, rgba(24, 24, 27, 0.09));
@@ -56,14 +57,15 @@ body {
   font-family: var(--magpie-font, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif);
   background: var(--bg);
   color: var(--text);
+  font-size: 13px;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
 }
 
 .shell {
-  max-width: 1280px;
+  max-width: 1488px;
   margin: 0 auto;
-  padding: 20px 18px 36px;
+  padding: 20px 24px 36px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -92,18 +94,30 @@ body {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.toolbar .btn:not(.is-active) {
+  border-color: transparent;
+  background: transparent;
+  color: var(--magpie-fg-2, var(--text));
+}
+
+.toolbar .btn:hover:not(.is-active):not(:disabled) {
+  background: color-mix(in srgb, var(--text) 5%, var(--bg));
 }
 
 .btn {
   appearance: none;
+  min-height: 28px;
+  padding: 4px 10px;
   border: 1px solid var(--border);
+  border-radius: 7px;
   background: var(--card);
   color: var(--text);
-  font-size: 12.5px;
-  font-weight: 550;
-  padding: 6px 12px;
-  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
   transition: border-color 0.15s ease, background-color 0.15s ease;
   white-space: nowrap;
@@ -175,22 +189,25 @@ body {
 }
 
 .status-strip {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 14px;
-  gap: 14px;
-  flex-wrap: wrap;
+  border-radius: var(--surface-radius);
 }
 
 .status-cell {
-  display: flex;
-  align-items: center;
-  gap: 7px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-auto-rows: min-content;
+  gap: 2px 8px;
   min-width: 0;
-  flex: 1 1 180px;
+  padding: 9px 14px;
+}
+
+.status-cell ~ .status-cell {
+  border-inline-start: 1px solid var(--border);
 }
 
 .status-label {
@@ -200,19 +217,21 @@ body {
 }
 
 .status-email {
+  grid-column: 1 / -1;
+  min-width: 0;
   font-size: 13px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 550;
+  overflow-wrap: anywhere;
 }
 
 .status-dot {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--muted);
-  flex-shrink: 0;
 }
 
 .status-dot.is-online {
@@ -220,15 +239,7 @@ body {
 }
 
 .status-divider {
-  width: 1px;
-  height: 16px;
-  background: var(--border);
-}
-
-@media (max-width: 620px) {
-  .status-divider {
-    display: none;
-  }
+  display: none;
 }
 
 .list-section {
@@ -240,11 +251,35 @@ body {
 .account-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+}
+
+#accountList,
+.unavailable-accounts {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--surface-radius);
+  overflow: hidden;
+}
+
+.unavailable-accounts summary {
+  cursor: pointer;
+  padding: 9px 14px;
+  font-size: 12.5px;
+  color: var(--magpie-fg-2, var(--text));
+}
+
+.unavailable-accounts summary:hover {
+  background: color-mix(in srgb, var(--bg) 42%, var(--card));
+}
+
+.unavailable-accounts[open] > summary {
+  border-bottom: 1px solid var(--border);
 }
 
 .quota-source {
+  order: 1;
   align-self: flex-end;
+  padding-inline: 2px;
   font-size: 12px;
   color: var(--muted);
 }
@@ -253,12 +288,14 @@ body {
 .account-row {
   display: grid;
   grid-template-columns: minmax(240px, 1.45fr) minmax(0, 3fr) 144px;
+  align-items: center;
   column-gap: 24px;
-  padding: 14px 16px;
+  padding: 12px 16px;
 }
 
 .quota-header {
-  align-items: center;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 42%, var(--card));
   color: var(--muted);
   font-size: 12px;
 }
@@ -277,29 +314,19 @@ body {
   text-align: right;
 }
 
-.account-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+/* 套餐写在账号行内，分组标题保留给辅助技术。 */
+.account-group > h2 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
-.account-group + .account-group {
-  margin-top: 12px;
-}
-
-.account-group h2 {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 2px;
-}
-
-.account-group h2 span {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
+.account-group + .account-group,
+.account-row + .account-row {
+  border-top: 1px solid var(--border);
 }
 
 .account-empty-state {
@@ -307,27 +334,24 @@ body {
   text-align: center;
   color: var(--muted);
   font-size: 13px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
 }
 
 .account-row {
-  align-items: center;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  transition: border-color 0.15s ease;
+  min-height: 72px;
+}
+
+.account-row .btn:focus-visible {
+  outline-offset: 2px;
 }
 
 .account-row.is-current {
-  border-color: rgba(59, 130, 246, 0.45);
+  background: color-mix(in srgb, var(--primary-soft) 42%, var(--card));
 }
 
 .account-main {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -357,11 +381,12 @@ body {
 }
 
 .tag {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 1.5px 7px;
+  max-width: 100%;
+  padding: 1px 6px;
   border-radius: 999px;
-  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .tag-pro {
@@ -418,7 +443,7 @@ body {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
 }
 
@@ -450,16 +475,21 @@ body {
 .quota-bar {
   display: block;
   width: 100%;
-  height: 5px;
-  border-radius: 999px;
-  background: rgba(128, 128, 128, 0.16);
+  height: 3px;
   overflow: hidden;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 9%, var(--card));
+}
+
+.quota-cell.is-unknown .quota-bar {
+  background: none;
+  border-bottom: 1px dotted var(--border);
 }
 
 .quota-fill {
   display: block;
   height: 100%;
-  border-radius: 999px;
+  border-radius: 2px;
   background: var(--success);
 }
 
@@ -498,22 +528,15 @@ body {
   text-decoration: underline;
 }
 
-.unavailable-accounts {
-  margin-top: 12px;
-}
-
-.unavailable-accounts summary {
-  cursor: pointer;
-  padding: 12px 0;
-  font-size: 13px;
-  color: var(--muted);
-}
-
 .btn:focus-visible,
 .link-btn:focus-visible,
 summary:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 3px;
+}
+
+.unavailable-accounts > summary:focus-visible {
+  outline-offset: -2px;
 }
 
 ::selection {
@@ -586,20 +609,30 @@ summary:focus-visible {
 
 @media (max-width: 620px) {
   .shell {
-    padding: 18px 14px 28px;
+    padding: 16px 14px 28px;
   }
 
   .toolbar {
     flex-wrap: wrap;
   }
 
+  .status-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .status-cell ~ .status-cell {
+    border-inline-start: 0;
+    border-top: 1px solid var(--border);
+  }
+
   .account-row {
     grid-template-columns: minmax(0, 1fr);
+    row-gap: 12px;
   }
 
   .account-quotas {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 18px 24px;
+    gap: 12px 16px;
   }
 
   .account-actions {
@@ -614,171 +647,7 @@ summary:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .btn,
-  .account-row {
+  .btn {
     transition: none;
   }
-}
-
-/* 帳票 */
-:root {
-  --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
-  --line-strong: color-mix(in srgb, var(--text) 18%, var(--border));
-  --tint: color-mix(in srgb, var(--bg) 38%, var(--card));
-}
-
-.shell {
-  max-width: 1020px;
-  margin: 18px auto 32px;
-  padding: 0;
-  gap: 0;
-  background: var(--card);
-  border: 1px solid var(--line-strong);
-  border-radius: 2px;
-}
-
-.topbar { padding: 13px 20px 11px; border-bottom: 1px solid var(--border); gap: 8px 14px; }
-.title-row { gap: 8px; }
-.title-block h1 { font-size: 14.5px; font-weight: 600; letter-spacing: 0.02em; }
-.subtitle { font-size: 11.5px; margin-top: 2px; }
-
-#btnGitHubStar.github-star-badge {
-  height: 21px; padding: 0 7px; border-radius: 2px;
-  border: 1px solid var(--border); opacity: 0.9; font-size: 11px;
-}
-#btnGitHubStar.github-star-badge:hover:not(:disabled) {
-  border-color: var(--line-strong); background: var(--tint); color: var(--text);
-}
-
-.toolbar { gap: 5px; }
-.btn {
-  padding: 4px 9px; font-size: 11.5px; font-weight: 500; line-height: 1.45;
-  border-radius: 2px; border-color: var(--line-strong); background: transparent;
-}
-.btn:hover:not(:disabled) { background: var(--tint); border-color: var(--text); }
-.btn-primary, .btn-filter.is-active {
-  background: var(--text); border-color: var(--text); color: var(--card); font-weight: 550;
-}
-.btn-primary:hover:not(:disabled), .btn-filter.is-active:hover:not(:disabled) {
-  background: var(--text); border-color: var(--text); opacity: 0.86;
-}
-.btn-ghost { border-color: var(--border); color: var(--muted); }
-.btn-ghost:hover:not(:disabled) { background: var(--tint); color: var(--text); }
-
-.toast { padding: 8px 20px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; font-size: 12px; }
-
-/* 三端状态格 */
-.status-strip {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding: 0; gap: 0; border: 0; border-bottom: 1px solid var(--line-strong);
-  border-radius: 0; background: var(--tint);
-}
-.status-divider { display: none; }
-.status-cell {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
-  gap: 2px 6px; padding: 9px 16px; border-right: 1px solid var(--border);
-}
-.status-cell:last-child { border-right: 0; }
-.status-label { grid-column: 1; font-size: 10.5px; letter-spacing: 0.05em; }
-.status-dot { grid-column: 2; grid-row: 1; width: 6px; height: 6px; }
-.status-email { grid-column: 1 / -1; font: 500 12.5px/1.35 var(--mono); }
-
-/* 账簿主体与对齐网格 */
-.list-section { padding: 0 20px; gap: 0; }
-.account-list { gap: 0; }
-.quota-source {
-  order: 4; align-self: stretch; margin: 0 -20px; padding: 9px 20px 11px;
-  border-top: 1px solid var(--border); font-size: 11px; text-align: right; background: var(--tint);
-}
-
-.quota-header, .account-row {
-  grid-template-columns: minmax(195px, 1.45fr) minmax(0, 3fr) 128px;
-  column-gap: 16px; padding: 10px 0;
-}
-.quota-header { padding: 10px 0 7px; border-bottom: 1px solid var(--text); font-size: 11px; }
-.quota-header strong { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
-.quota-header .quota-group { gap: 2px; }
-
-.account-group { gap: 0; }
-.account-group + .account-group { margin-top: 0; }
-.account-group h2 {
-  justify-content: space-between; margin: 0; padding: 12px 0 4px;
-  border-bottom: 1px solid var(--line-strong);
-  font-size: 10.5px; font-weight: 500; letter-spacing: 0.12em; color: var(--muted);
-}
-.account-group h2 span { font: 400 11px/1 var(--mono); }
-
-.account-row {
-  background: transparent; border: 0; border-bottom: 1px solid var(--border);
-  border-radius: 0; transition: background-color 0.12s ease;
-}
-.account-row:hover { background: var(--tint); }
-.account-row.is-current {
-  background: color-mix(in srgb, var(--primary-soft) 42%, var(--card));
-  box-shadow: inset 2px 0 0 var(--primary); padding-left: 8px; margin-left: -8px;
-}
-
-.account-main { gap: 3px; }
-.account-email { font: 500 12.5px/1.35 var(--mono); }
-.account-tags { gap: 4px; }
-.account-updated, .account-unavailable { font-size: 11px; }
-.tag {
-  padding: 0 5px; font-size: 10px; font-weight: 500; line-height: 1.55;
-  border-radius: 2px; border: 1px solid var(--border); background: transparent;
-}
-.tag-pro { border-color: color-mix(in srgb, var(--success) 45%, transparent); background: var(--success-soft); }
-.tag-active { border-color: color-mix(in srgb, var(--primary) 45%, transparent); background: var(--primary-soft); }
-.tag-bad { border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: var(--danger-soft); }
-
-/* 细墨标尺与等宽测量字 */
-.account-quotas { column-gap: 14px; }
-.quota-windows { column-gap: 10px; }
-.quota-cell { gap: 4px; }
-.quota-value { font: 500 12.5px/1.25 var(--mono); font-variant-numeric: tabular-nums; }
-.quota-cell.is-low .quota-value { font-weight: 600; }
-.quota-cell.is-unknown .quota-value { font-family: inherit; font-size: 11.5px; line-height: 1.3; }
-.quota-bar { height: 2px; border-radius: 0; background: var(--border); }
-.quota-fill { border-radius: 0; background: var(--text); }
-.quota-cell.is-unknown .quota-bar {
-  background: repeating-linear-gradient(90deg, var(--line-strong) 0 2px, transparent 2px 5px);
-}
-.quota-reset { min-height: 14px; font: 400 10.5px/1.25 var(--mono); }
-.account-actions { gap: 4px; }
-
-.account-empty-state { border: 0; border-radius: 0; background: transparent; padding: 28px 0; }
-.hidden-footer { order: 2; padding: 8px 0; font-size: 11.5px; border-bottom: 1px solid var(--border); }
-.unavailable-accounts { order: 3; margin-top: 0; }
-.unavailable-accounts summary { padding: 10px 0; font-size: 11.5px; letter-spacing: 0.04em; }
-
-@media (max-width: 1060px) {
-  .quota-header, .account-row {
-    grid-template-columns: minmax(175px, 1.25fr) minmax(0, 3fr) 118px;
-    column-gap: 12px; padding: 10px 0;
-  }
-  .account-quotas { column-gap: 10px; }
-  .account-actions .btn { padding: 4px 7px; }
-}
-
-@media (max-width: 960px) {
-  .quota-header { display: none; }
-  .account-row { grid-template-columns: minmax(0, 1fr) auto; row-gap: 10px; padding: 11px 0; }
-  .quota-group-label { font-size: 11px; margin-bottom: 3px; }
-  .quota-period { font-size: 10px; }
-}
-
-@media (max-width: 620px) {
-  .shell { margin: 0; border: 0; border-radius: 0; }
-  .topbar, .toast { padding-left: 14px; padding-right: 14px; }
-  .list-section { padding: 0 14px; }
-  .quota-source { margin: 0 -14px; padding: 8px 14px; }
-  .status-strip { grid-template-columns: 1fr; }
-  .status-cell { padding: 8px 14px; border-right: 0; border-bottom: 1px solid var(--border); }
-  .status-cell:last-child { border-bottom: 0; }
-  .account-row { grid-template-columns: minmax(0, 1fr); }
-  .account-quotas { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
-  .account-actions { grid-column: 1; grid-row: 3; justify-self: start; flex-wrap: wrap; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .account-row { transition: none; }
 }
