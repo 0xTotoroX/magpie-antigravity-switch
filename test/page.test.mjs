@@ -295,3 +295,14 @@ test("the quota timeout follows Magpie's language and keeps available readings v
   assert.match(p.el("accountList").innerHTML, /The agy quota query timed out/);
   assert.match(p.el("accountList").innerHTML, /aria-valuenow="72"/);
 });
+
+test("a delayed older snapshot cannot replace the latest quota result", () => {
+  const state = { ...baseState(), generatedAt: "2026-11-21T01:00:00.000Z" };
+  const p = page(state);
+  p.render({ ...state, generatedAt: "2026-11-21T01:00:02.000Z",
+    lastSwitch: { cmdId: "new", message: "new result", ok: true } });
+  p.render({ ...state, generatedAt: "2026-11-21T01:00:01.000Z",
+    lastSwitch: { cmdId: "old", message: "old result", ok: false } });
+  assert.equal(p.el("toastBanner").textContent, "new result");
+  assert.equal(p.el("toastBanner").className, "toast is-ok");
+});

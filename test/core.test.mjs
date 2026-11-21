@@ -746,3 +746,58 @@ test("refresh command results stay deduplicated and replace prior switch details
   assert.equal(afterFailure.lastSwitch.message, failed.error);
   assert.equal(afterFailure.lastSwitch.target, undefined);
 });
+
+test("a failed file replacement rolls back preceding switch writes and leaves the Keychain alone", async () => {
+  const old = "old@example.test", next = "next@example.test";
+  const f = await fixture({ keychain: auth(old) });
+  const { PATHS } = f.core;
+  f.write(PATHS.loginsJson, [{ ...login(old), first: true }, login(next)]);
+  const original = '{ "jetski.onboarding.lastLoginUsername": "old@example.test" }\n';
+  f.fs.writeFileSync(PATHS.appStorage, original);
+  f.renameErrors.set(PATHS.standaloneToken, "EACCES");
+
+  assert.throws(() => f.core.switchAccount({ email: next }), /fixture rename denied/);
+  assert.equal(f.fs.readFileSync(PATHS.appStorage, "utf8"), original);
+  assert.equal(f.fs.existsSync(PATHS.cliToken), false);
+  assert.equal(f.fs.existsSync(PATHS.standaloneToken), false);
+  assert.equal(f.read(PATHS.loginsJson)[0].first, true);
+  assert.equal(f.keychain().id_token_email, old);
+  assert(!f.calls.some(c => c.args[0] === "add-generic-password"));
+  assert(![...f.files.keys()].some(file => file.includes(".tmp-")));
+});
+
+test("a reused provider home cannot switch a different email to its credentials", async () => {
+  const f = await fixture();
+  const { PATHS } = f.core;
+  const old = "old@example.test", next = "next@example.test";
+  f.write(PATHS.loginsJson, [{ agent: "plugin:agy-cli", user: old, home: "agy-cli#shared", on: true }]);
+  f.write(PATHS.pluginAuthJson, { "agy-cli#shared": {
+    type: "oauth", access: "unrelated-access", refresh: "unrelated-refresh",
+    expires: Date.now() + 1000, metadata: { email: next }
+  } });
+  const account = f.core.getFullState().accounts.find(a => a.email === old);
+  assert.equal(account.hasCredentials, false);
+  assert.throws(() => f.core.switchAccount({ email: old }), /未找到账号/);
+  assert.equal(f.keychainRaw(), null);
+});
+
+test("a fresh command can finish after waiting in the daemon queue", async () => {
+  const f = await fixture();
+  const receivedAt = Date.now() - 60_000;
+  const cmd = { id: "queued", type: "refresh", ts: receivedAt - 10 };
+  assert.equal(await f.core.executeCommandAsync(cmd), null);
+  assert.equal((await f.core.executeCommandAsync(cmd, { receivedAt })).ok, true);
+  assert.equal(f.read(f.core.PATHS.vaultJson).lastExecutedCmdId, cmd.id);
+});
+
+test("an old DevTools file and a lookalike process cannot trigger a desktop restart", async () => {
+  const f = await fixture({ fakeProcessList:
+    "4242 /bin/sh -c /Applications/Antigravity.app/Contents/Resources/bin/language_server --csrf_token abc-def"
+  });
+  f.fs.writeFileSync(f.core.PATHS.devToolsActivePort, "46800\n");
+  f.fs.writeFileSync(f.core.PATHS.mainLog, "Language server crashed 3 times in a row. Giving up.\n");
+  const result = f.core.reloadDesktopLanguageServer();
+  assert.equal(result.reloaded, false);
+  assert.match(result.reason, /当前未运行/);
+  assert(!f.calls.some(c => ["kill", "killall", "open"].includes(c.cmd)));
+});

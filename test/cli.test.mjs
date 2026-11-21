@@ -26,3 +26,17 @@ test("#9 plugin import does not run the CLI", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "");
 });
+
+test("switch help and invalid targeting cannot fall back to switching all clients", () => {
+  const entry = path.join(project, "index.mjs");
+  for (const [args, status, expected] of [
+    [["switch", "--help"], 0, /用法/],
+    [["switch", "--targt=cli"], 1, /切换参数无效/],
+    [["switch", "--target="], 1, /切换参数无效/],
+    [["unknown-command"], 1, /未知命令/]
+  ]) {
+    const result = spawnSync(process.execPath, [entry, ...args], { encoding: "utf8" });
+    assert.equal(result.status, status, result.stderr);
+    assert.match(result.stdout + result.stderr, expected);
+  }
+});

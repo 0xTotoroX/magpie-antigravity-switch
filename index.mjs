@@ -24,8 +24,7 @@ import { ensureBackgroundWatcher } from "./src/daemon.mjs";
  */
 export const AntigravitySwitchPlugin = async () => {
   try {
-    syncStateFile();
-    ensureBackgroundWatcher();
+    ensureBackgroundWatcher({ forPage: true });
   } catch {
     // Non-fatal in plugin host
   }
@@ -46,7 +45,7 @@ function printStatus() {
   console.log(`推荐充裕账号            : ${state.recommendedEmail || "无"}`);
   console.log(`会员统计                : 会员 ${state.counts.paid ?? state.counts.pro} 个 / 免费版 ${state.counts.free} 个 / 套餐未知 ${state.counts.unknown} 个 / 异常 ${state.counts.ineligible} 个`);
   console.log(`筛选模式                : ${state.preferences?.onlyPro ? "仅显示已识别会员" : "显示全部可用账号"}`);
-  console.log(`后台同步守护进程        : PID ${daemonInfo.pid}`);
+  console.log(`后台同步守护进程        : ${daemonInfo.pid ? `PID ${daemonInfo.pid}` : "运行中"}`);
   console.log("\n账号列表:");
   for (const acc of state.accounts) {
     const badges = [
@@ -70,16 +69,29 @@ async function runCli() {
   const args = process.argv.slice(2);
   const cmd = args[0] || "status";
 
+  if (cmd === "help" || args.includes("--help") || args.includes("-h")) {
+    printUsage();
+    return;
+  }
+
   if (cmd === "status") {
     printStatus();
     return;
   }
 
   if (cmd === "switch") {
-    const emailArg = args.find((a, idx) => idx > 0 && !a.startsWith("--"));
-    const reloadDesktop = !args.includes("--no-reload");
-    const targetArg = args.find((a) => a.startsWith("--target="))?.split("=")[1] || "all";
-    const syncMagpie = !args.includes("--no-magpie");
+    const options = args.slice(1);
+    const targets = options.filter((arg) => arg.startsWith("--target="));
+    const positional = options.filter((arg) => !arg.startsWith("-"));
+    const unknown = options.find((arg) => arg.startsWith("-") &&
+      !arg.startsWith("--target=") && !["--no-reload", "--no-magpie"].includes(arg));
+    const targetArg = targets.length ? targets[0].slice("--target=".length) : "all";
+    if (unknown || targets.length > 1 || positional.length > 1 || !["all", "desktop", "cli"].includes(targetArg)) {
+      throw new Error("切换参数无效，请使用 switch --help 查看用法");
+    }
+    const [emailArg] = positional;
+    const reloadDesktop = !options.includes("--no-reload");
+    const syncMagpie = !options.includes("--no-magpie");
 
     let targetEmail = emailArg;
     if (!targetEmail || targetEmail === "best" || targetEmail === "recommended") {
@@ -129,6 +141,8 @@ async function runCli() {
   if (cmd === "refresh") {
     const res = await refreshCliAccounts({ force: !args.includes("--cached") });
     console.log(res.message);
+    if (!res.ok || res.state?.error) process.exitCode = 1;
+    if (res.state?.error) console.error(res.state.error);
     if (res.errors?.length) {
       for (const e of res.errors) {
         console.error(`- ${e.email}: ${e.error}`);
@@ -145,10 +159,16 @@ async function runCli() {
 
   if (cmd === "daemon") {
     const info = ensureBackgroundWatcher();
-    console.log(`守护进程运行中: PID ${info.pid}`);
+    console.log(`守护进程运行中${info.pid ? ` (PID ${info.pid})` : ""}`);
     return;
   }
 
+  console.error(`未知命令：${cmd}`);
+  process.exitCode = 1;
+  printUsage();
+}
+
+function printUsage() {
   console.log("用法:");
   console.log("  node index.mjs status");
   console.log("  node index.mjs refresh [--cached]");

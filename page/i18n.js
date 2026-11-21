@@ -41,6 +41,7 @@
     verifyAccount: ["账号需验证或地区受限", "Account verification required or region unsupported"],
     noBridge: ["未检测到 Magpie 页面桥接，请通过 Magpie 侧边栏打开", "Open this plugin from the Magpie sidebar to connect it"],
     refreshTimeout: ["额度刷新暂未返回结果", "The quota refresh has not returned a result yet"],
+    commandTimeout: ["操作暂未返回结果", "The operation has not returned a result yet"],
     quotaQueryTimeout: ["agy 额度查询超时", "The agy quota query timed out"],
     commandFailed: ["指令发送失败", "Could not send the command"]
   };
@@ -49,6 +50,8 @@
   // Vendor messages and original plan names remain intact.
   const backendMessages = [
     [/^无法读取 (.+)，已停止写入$/, "Could not read $1. Writes were stopped."],
+    [/^(.+) 在切换期间发生变化，请重试$/, "$1 changed while switching. Retry the operation."],
+    [/ · 未能恢复 (.+)，请检查当前登录状态$/, " · Could not restore $1. Check the current sign-in."],
     [/^(.+) 格式无效，已保留原文件$/, "$1 has an invalid format. The original file was preserved."],
     [/^无法备份 (.+)，已停止凭据替换$/, "Could not back up $1. The existing credentials were preserved."],
     [/^无法读取 macOS 钥匙串，已停止备份和凭据替换，请检查访问权限$/, "Could not read the macOS Keychain. Check access permissions before retrying."],

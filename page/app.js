@@ -156,7 +156,9 @@
     const tierLabel = account.isEligible && account.plan
       ? account.plan
       : i18n.stateLabel(account.tierLabel) || t(isPaid ? "member" : "planUnknown");
-    const quotaIssue = account.isEligible && (account.quota?.error || account.quota?.refreshError);
+    const quotaIssue = account.isEligible
+      ? account.quota?.error || account.quota?.refreshError
+      : account.ineligibleReason;
 
     const canSwitch = account.hasCredentials && account.isEligible;
     const disabled = pendingCommandType !== null || Boolean(currentState?.error);
@@ -272,15 +274,19 @@
     }
   }
 
+  function receiveState(state) {
+    if (!state || (state.generatedAt && state === currentState)) return;
+    if (state.generatedAt && currentState?.generatedAt && state.generatedAt < currentState.generatedAt) return;
+    render(state);
+  }
+
   async function pollStateScript() {
     return new Promise((resolve) => {
       const script = document.createElement("script");
       script.src = `state.js?t=${Date.now()}`;
       script.onload = () => {
         script.remove();
-        if (globalThis.__AGY_SWITCH_STATE__) {
-          render(globalThis.__AGY_SWITCH_STATE__);
-        }
+        receiveState(globalThis.__AGY_SWITCH_STATE__);
         resolve();
       };
       script.onerror = () => {
@@ -323,7 +329,7 @@
         await pollStateScript();
         if (lastHandledSwitchId === cmdId) return;
       }
-      if (isRefreshing) showToast(t("refreshTimeout"), false);
+      showToast(t(isRefreshing ? "refreshTimeout" : "commandTimeout"), false);
     } catch (err) {
       showToast(`${t("commandFailed")}${i18n.separator()}${err.message || err}`, false);
     } finally {
@@ -375,9 +381,7 @@
     }
   });
 
-  globalThis.__AGY_SWITCH_ON_STATE__ = (newState) => {
-    render(newState);
-  };
+  globalThis.__AGY_SWITCH_ON_STATE__ = receiveState;
 
   function applyLanguage(value) {
     if (!value || !i18n.setLanguage(value)) return;

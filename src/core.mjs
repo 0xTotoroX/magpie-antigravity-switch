@@ -47,7 +47,9 @@ const KEYCHAIN_SERVICE = "gemini";
 const KEYCHAIN_ACCOUNT = "antigravity";
 const KEYCHAIN_PREFIX = "go-keyring-base64:";
 const AGY_VERSION_TTL_MS = 60_000;
-const LANGUAGE_SERVER_PATTERN = "/Applications/Antigravity.app/Contents/Resources/bin/language_server";
+const DESKTOP_APP = "/Applications/Antigravity.app";
+const DESKTOP_EXECUTABLE = `${DESKTOP_APP}/Contents/MacOS/Antigravity`;
+const LANGUAGE_SERVER_PATTERN = `${DESKTOP_APP}/Contents/Resources/bin/language_server`;
 const RELOAD_WINDOW_MS = 65_000;
 const MAX_RELOADS_PER_WINDOW = 2;
 
@@ -77,21 +79,25 @@ function readJsonSafe(filePath, fallback = null) {
 }
 
 // 写回前只允许“文件不存在”使用默认值；权限、空文件和损坏内容都必须保留。
-function readJsonForUpdate(filePath, fallback, validate) {
+function readJsonSnapshot(filePath, fallback, validate) {
   let raw;
   try {
-    raw = fs.readFileSync(filePath, "utf8");
+    raw = fs.readFileSync(filePath);
   } catch (err) {
-    if (err.code === "ENOENT") return fallback;
+    if (err.code === "ENOENT") return { value: fallback, raw: null };
     throw new Error(`无法读取 ${path.basename(filePath)}，已停止写入`);
   }
   try {
-    const value = JSON.parse(raw);
+    const value = JSON.parse(raw.toString("utf8"));
     if (!validate(value)) throw new Error("invalid shape");
-    return value;
+    return { value, raw };
   } catch {
     throw new Error(`${path.basename(filePath)} 格式无效，已保留原文件`);
   }
+}
+
+function readJsonForUpdate(filePath, fallback, validate) {
+  return readJsonSnapshot(filePath, fallback, validate).value;
 }
 
 const isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -168,31 +174,24 @@ function isRelevantPluginAuthKey(key) {
   );
 }
 
+function jsonText(data) {
+  return `${JSON.stringify(data, null, 2)}\n`;
+}
+
 function writeJsonAtomic(filePath, data, mode = 0o600) {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  const content = `${JSON.stringify(data, null, 2)}\n`;
-  fs.writeFileSync(tmpPath, content, { encoding: "utf8", mode });
-  try {
-    fs.chmodSync(tmpPath, mode);
-  } catch {
-    // ignore chmod errors
-  }
-  fs.renameSync(tmpPath, filePath);
+  writeTextAtomic(filePath, jsonText(data), mode);
 }
 
 function writeTextAtomic(filePath, content, mode = 0o644) {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  fs.writeFileSync(tmpPath, content, { encoding: "utf8", mode });
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.tmp-${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
   try {
-    fs.chmodSync(tmpPath, mode);
-  } catch {
-    // ignore
+    fs.writeFileSync(tmpPath, content, { encoding: "utf8", mode });
+    fs.renameSync(tmpPath, filePath);
+  } catch (err) {
+    try { fs.rmSync(tmpPath, { force: true }); } catch { /* Best-effort cleanup. */ }
+    throw err;
   }
-  fs.renameSync(tmpPath, filePath);
 }
 
 export function readKeychainRaw({ strict = false } = {}) {
@@ -249,24 +248,30 @@ export function writeKeychainAuth(payloadObj) {
     if (fs.existsSync(LANGUAGE_SERVER_PATTERN)) trustedArgs.push("-T", LANGUAGE_SERVER_PATTERN);
   }
   const baseArgs = ["add-generic-password", "-U", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT];
+  let wrote = false;
   try {
     execFileSync(
       "security",
       [...baseArgs, ...trustedArgs, "-w", encoded],
       { stdio: ["ignore", "ignore", "ignore"] }
     );
-  } catch {
-    // Preserve the previous data if a write reports failure after changing it.
-    // Restoring content must not widen or replace the item's existing ACL.
+    wrote = true;
+    if (readKeychainRaw({ strict: true }) !== encoded) {
+      throw new Error("macOS 钥匙串未确认目标账号，请检查登录状态后重试");
+    }
+  } catch (err) {
+    // Preserve the existing item's access policy even when restoration is needed.
     if (previous !== null) {
       try {
         if (readKeychainRaw() !== previous) {
           execFileSync("security", [...baseArgs, "-w", previous], { stdio: ["ignore", "ignore", "ignore"] });
+          if (readKeychainRaw({ strict: true }) !== previous) throw new Error("恢复后校验失败");
         }
       } catch {
         throw new Error("钥匙串更新及旧凭据恢复失败，请从本地备份恢复后再切换账号");
       }
     }
+    if (wrote) throw err;
     throw new Error(previous === null
       ? "写入 macOS 钥匙串失败，请检查访问权限后重试"
       : "写入 macOS 钥匙串失败，旧凭据已保留，请检查访问权限后重试");
@@ -426,28 +431,34 @@ function isBackupComplete(backupDir) {
   });
 }
 
+function findAppProcess(executable, column = "comm") {
+  const processes = execFileSync("ps", ["-axww", "-o", `pid=,${column}=`], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000
+  });
+  for (const line of processes.split("\n")) {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    if (!match) continue;
+    const command = match[2].trim();
+    if (command === executable || (column === "args" && command.startsWith(`${executable} `))) {
+      return { pid: Number(match[1]), command };
+    }
+  }
+  return null;
+}
+
 function getRunningLanguageServerInfo() {
   try {
-    const psOut = execFileSync("ps", ["aux"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"]
-    });
-    const line = psOut
-      .split("\n")
-      .find((l) => l.includes(LANGUAGE_SERVER_PATTERN) && !l.includes("grep"));
-    if (!line) return null;
-    const parts = line.trim().split(/\s+/);
-    const pid = parts[1];
-    const csrfMatch = /--csrf_token\s+([a-f0-9-]+)/i.exec(line);
-    const csrf = csrfMatch ? csrfMatch[1] : null;
-    if (!pid) return null;
+    const ls = findAppProcess(LANGUAGE_SERVER_PATTERN, "args");
+    if (!ls) return null;
+    const { pid, command } = ls;
+    const csrf = /(?:^|\s)--csrf_token(?:=|\s+)([a-f0-9-]+)/i.exec(command)?.[1] || null;
 
     let port = null;
     try {
       const lsofOut = execFileSync(
         "lsof",
         ["-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", String(pid)],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000 }
       );
       const portMatch = /:(\d+)\s+\(LISTEN\)/.exec(lsofOut);
       if (portMatch) {
@@ -565,6 +576,16 @@ function extractPluginCredential(entry) {
   };
 }
 
+function readPluginCredentials(pluginAuth) {
+  const credentials = new Map();
+  for (const [key, entry] of Object.entries(pluginAuth)) {
+    if (!isRelevantPluginAuthKey(key)) continue;
+    const credential = extractPluginCredential(entry);
+    if (credential) credentials.set(key, credential);
+  }
+  return credentials;
+}
+
 export function captureLiveClientAccounts() {
   ensureInitialBackup();
   const vault = readVault();
@@ -654,12 +675,8 @@ export function captureLiveClientAccounts() {
   }
 
   const pluginAuth = readPluginAuth();
-  const pluginCredentials = new Map();
-  for (const [key, entry] of Object.entries(pluginAuth)) {
-    if (!isRelevantPluginAuthKey(key)) continue;
-    const cred = extractPluginCredential(entry);
-    if (!cred) continue;
-    pluginCredentials.set(key, cred);
+  const pluginCredentials = readPluginCredentials(pluginAuth);
+  for (const cred of pluginCredentials.values()) {
     if (cred.email && cred.auth?.refresh_token) {
       upsertTokenRecord(
         {
@@ -840,9 +857,10 @@ function collectPluginCredentialsForEmail(email, matchingLogins, pluginCredentia
   if (pluginCredentials instanceof Map) {
     for (const login of matchingLogins || []) {
       const homeKey = getLoginHomeKey(login);
-      if (homeKey && !seenKeys.has(homeKey) && pluginCredentials.has(homeKey)) {
+      const cred = homeKey ? pluginCredentials.get(homeKey) : null;
+      if (cred && !seenKeys.has(homeKey) && (!cred.email || cred.email.toLowerCase() === email.toLowerCase())) {
         seenKeys.add(homeKey);
-        list.push(pluginCredentials.get(homeKey));
+        list.push(cred);
       }
     }
     for (const [key, cred] of pluginCredentials.entries()) {
@@ -1059,7 +1077,7 @@ function buildState(inputs, agyCliOnly = false) {
   const supportedLogins = logins.filter((item) =>
     (agyCliOnly ? isMagpieAgyCliLogin(item, pluginAuth) : isSupportedLoginAgent(item?.agent)) &&
     resolveLoginItemEmail(item, pluginCredentials));
-  const firstCandidates = agyCliOnly ? supportedLogins.filter((item) => item.on && !item.lapsed) : supportedLogins;
+  const firstCandidates = supportedLogins.filter((item) => item.on && !item.lapsed);
   const magpieFirst = firstCandidates.find((item) => item.first) || firstCandidates.find((item) => item.on) || null;
   const magpieFirstEmail = resolveLoginItemEmail(magpieFirst, pluginCredentials);
 
@@ -1273,9 +1291,7 @@ export function syncStateFile({ fullResult = false } = {}) {
   return fullState || state;
 }
 
-function resolveAccountCredentials(email) {
-  const { vault, pluginCredentials } = captureLiveClientAccounts();
-  const logins = readLogins();
+function resolveAccountCredentials(email, { vault, pluginCredentials }, logins) {
   const matchingLogins = Array.isArray(logins)
     ? logins.filter(
         (item) => item && isSupportedLoginAgent(item.agent) && resolveLoginItemEmail(item, pluginCredentials) === email
@@ -1615,10 +1631,9 @@ function spawnDesktopRecoveryWatcher(oldPid, savedRoute = "/") {
 
     function findNewLsPort() {
       try {
-        const psOut = execFileSync("ps", ["aux"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-        const line = psOut.split("\\n").find((l) => l.includes(lsPattern) && !l.includes("grep"));
-        if (!line) return null;
-        const pid = Number(line.trim().split(/\\s+/)[1]);
+        const psOut = execFileSync("ps", ["-axww", "-o", "pid=,comm="], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000 });
+        const line = psOut.split("\\n").map((line) => line.trim().split(/\\s+/, 2)).find((pair) => pair[1] === lsPattern);
+        const pid = Number(line?.[0]);
         if (!pid || pid === oldPid) return null;
         const lsofOut = execFileSync("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", String(pid)], {
           encoding: "utf8",
@@ -1737,21 +1752,20 @@ export function reloadDesktopLanguageServer(targetEmail = "", language) {
   const lsState = inspectElectronRestartState();
   const lsInfo = getRunningLanguageServerInfo();
 
-  // Case 1: Electron previously hit 3/3 crashes and gave up (window is stuck on black screen)
-  if (!lsInfo && fs.existsSync(PATHS.devToolsActivePort)) {
+  // Only recover a running desktop app that recorded a language-server crash.
+  if (!lsInfo && lsState.gaveUp) {
     try {
-      execFileSync("killall", ["Antigravity"], { stdio: ["ignore", "ignore", "ignore"] });
-    } catch {
-      // ignore
-    }
-    try {
-      execFileSync("open", ["-a", "/Applications/Antigravity.app"], { stdio: ["ignore", "ignore", "ignore"] });
-      return {
-        reloaded: true,
-        reason: "检测到桌面端服务曾停止响应，已自动重启 Antigravity 恢复界面"
-      };
-    } catch {
-      // ignore
+      const desktop = findAppProcess(DESKTOP_EXECUTABLE);
+      if (desktop) {
+        execFileSync("kill", ["-TERM", String(desktop.pid)], { stdio: ["ignore", "ignore", "ignore"] });
+        execFileSync("open", ["-a", DESKTOP_APP], { stdio: ["ignore", "ignore", "ignore"] });
+        return {
+          reloaded: true,
+          reason: "检测到桌面端服务曾停止响应，已自动重启 Antigravity 恢复界面"
+        };
+      }
+    } catch (err) {
+      return { reloaded: false, reason: `桌面端重载失败: ${sanitizeErrorMessage(err)}` };
     }
   }
 
@@ -1774,6 +1788,9 @@ export function reloadDesktopLanguageServer(targetEmail = "", language) {
 
   try {
     const savedRoute = injectSmoothTransitionOverlaySync(targetEmail, language);
+    if (findAppProcess(LANGUAGE_SERVER_PATTERN)?.pid !== lsInfo.pid) {
+      throw new Error("桌面端服务进程已变化，请重试");
+    }
     execFileSync("kill", ["-TERM", String(lsInfo.pid)], {
       stdio: ["ignore", "ignore", "ignore"]
     });
@@ -1796,79 +1813,111 @@ export function reloadDesktopLanguageServer(targetEmail = "", language) {
   }
 }
 
+function readFileOrMissing(filePath) {
+  try {
+    return fs.readFileSync(filePath);
+  } catch (err) {
+    if (err.code !== "ENOENT") throw err;
+    return null;
+  }
+}
+
+function sameFileContents(left, right) {
+  return left === null || right === null ? left === right : left.equals(right);
+}
+
+function saveSwitchFiles(updates, payloadForKeychain) {
+  const applied = [];
+  try {
+    for (const { filePath, previous, value } of updates) {
+      if (!sameFileContents(readFileOrMissing(filePath), previous)) {
+        throw new Error(`${path.basename(filePath)} 在切换期间发生变化，请重试`);
+      }
+      const content = Buffer.from(jsonText(value));
+      writeTextAtomic(filePath, content, 0o600);
+      applied.push({ filePath, previous, content });
+    }
+    if (payloadForKeychain) writeKeychainAuth(payloadForKeychain);
+  } catch (err) {
+    const failures = [];
+    for (const { filePath, previous, content } of applied.reverse()) {
+      try {
+        if (!sameFileContents(readFileOrMissing(filePath), content)) {
+          throw new Error("配置已被其他进程修改");
+        }
+        if (previous === null) fs.unlinkSync(filePath);
+        else writeTextAtomic(filePath, previous, 0o600);
+      } catch {
+        failures.push(path.basename(filePath));
+      }
+    }
+    if (failures.length) {
+      throw new Error(`${sanitizeErrorMessage(err)} · 未能恢复 ${failures.join("、")}，请检查当前登录状态`);
+    }
+    throw err;
+  }
+}
+
 export function switchAccount({
-  email,
+  email: requestedEmail,
   target = "all",
   reloadDesktop = false,
   syncMagpie = true,
   language
 } = {}) {
-  if (!email || typeof email !== "string") {
-    throw new Error("请指定要切换的目标邮箱账号");
-  }
+  const email = normalizeEmail(requestedEmail);
+  if (!email) throw new Error("请指定要切换的目标邮箱账号");
 
   if (!["all", "desktop", "cli"].includes(target)) throw new Error("无效切换目标，请使用 all、desktop 或 cli");
   const switchesDesktop = target !== "cli";
   const switchesCli = target !== "desktop";
-  // 在任何凭据写入前检查所有会写回的配置。
-  if (syncMagpie) readLogins();
-  const appStorage = switchesDesktop
-    ? readJsonForUpdate(PATHS.appStorage, {}, isRecord) : null;
+  const loginSnapshot = readJsonSnapshot(PATHS.loginsJson, [], Array.isArray);
+  const desktopSnapshot = switchesDesktop ? readJsonSnapshot(PATHS.appStorage, {}, isRecord) : null;
   const sharedCliLogin = switchesCli && usesSharedAgyKeychain({ refresh: true });
   const writesKeychain = switchesDesktop || sharedCliLogin;
 
-  ensureInitialBackup();
-  const { pluginCredentials } = captureLiveClientAccounts();
-
-  const { clientPayload } = resolveAccountCredentials(email);
+  const captured = captureLiveClientAccounts();
+  const { pluginCredentials } = captured;
+  const { clientPayload } = resolveAccountCredentials(email, captured, loginSnapshot.value);
   const updatedTargets = [];
-
-  if (writesKeychain) {
-    writeKeychainAuth(clientPayload);
-    const saved = parseKeychainSecret(readKeychainRaw({ strict: true }));
-    if (saved?.id_token_email !== clientPayload.id_token_email) {
-      throw new Error("macOS 钥匙串未确认目标账号，请检查登录状态后重试");
-    }
-  }
+  const updates = [];
 
   if (switchesDesktop) {
-    if (appStorage && typeof appStorage === "object") {
-      appStorage["jetski.onboarding.lastLoginUsername"] = email;
-      writeJsonAtomic(PATHS.appStorage, appStorage, 0o600);
-    }
+    const { value, raw } = desktopSnapshot;
+    value["jetski.onboarding.lastLoginUsername"] = email;
+    updates.push({ filePath: PATHS.appStorage, previous: raw, value });
     updatedTargets.push("桌面端");
   }
 
   if (switchesCli) {
     if (switchesDesktop || !sharedCliLogin) {
-      writeJsonAtomic(PATHS.cliToken, clientPayload, 0o600);
-      writeJsonAtomic(PATHS.standaloneToken, clientPayload, 0o600);
+      for (const filePath of [PATHS.cliToken, PATHS.standaloneToken]) {
+        const { raw } = readJsonSnapshot(filePath, null, isRecord);
+        updates.push({ filePath, previous: raw, value: clientPayload });
+      }
     }
     updatedTargets.push("CLI");
   }
 
   if (syncMagpie) {
-    const logins = readLogins();
-    if (Array.isArray(logins)) {
-      const hasAccountInMagpie = logins.some(
-        (item) => item && isSupportedLoginAgent(item.agent) && resolveLoginItemEmail(item, pluginCredentials) === email
-      );
-      if (hasAccountInMagpie) {
-        for (const item of logins) {
-          if (item && isSupportedLoginAgent(item.agent)) {
-            if (resolveLoginItemEmail(item, pluginCredentials) === email) {
-              item.first = true;
-              item.on = true;
-            } else if (item.first) {
-              delete item.first;
-            }
-          }
+    const { value: logins, raw } = loginSnapshot;
+    const siblings = logins.filter((item) => isSupportedLoginAgent(item?.agent));
+    const matches = siblings.filter((item) => resolveLoginItemEmail(item, pluginCredentials) === email);
+    if (matches.length) {
+      for (const item of siblings) {
+        if (matches.includes(item)) {
+          item.first = true;
+          item.on = true;
+        } else if (item.first) {
+          delete item.first;
         }
-        writeJsonAtomic(PATHS.loginsJson, logins, 0o600);
-        updatedTargets.push("Magpie");
       }
+      updates.push({ filePath: PATHS.loginsJson, previous: raw, value: logins });
+      updatedTargets.push("Magpie");
     }
   }
+
+  saveSwitchFiles(updates, writesKeychain ? clientPayload : null);
 
   let reloadResult = null;
   if (reloadDesktop && switchesDesktop) {
@@ -1960,7 +2009,8 @@ function refreshMagpieQuota(user) {
 }
 
 export async function refreshCliAccounts({ force = false, now = () => Date.now() } = {}) {
-  const { pluginAuth, pluginCredentials } = captureLiveClientAccounts();
+  const pluginAuth = readPluginAuth();
+  const pluginCredentials = readPluginCredentials(pluginAuth);
   const cache = readCliQuotaCache();
   const nowMs = now();
   const attemptedAt = new Date(nowMs).toISOString();
@@ -2069,9 +2119,9 @@ function openGitHubRepo() {
   };
 }
 
-function isPendingCommand(cmd) {
+function isPendingCommand(cmd, receivedAt = Date.now()) {
   if (!cmd || typeof cmd !== "object" || !cmd.id) return false;
-  if (typeof cmd.ts === "number" && Math.abs(Date.now() - cmd.ts) > 30_000) return false;
+  if (typeof cmd.ts === "number" && Math.abs(receivedAt - cmd.ts) > 30_000) return false;
   const vault = readVault();
   return vault.lastExecutedCmdId !== cmd.id && vault.lastSwitch?.cmdId !== cmd.id;
 }
@@ -2097,9 +2147,9 @@ function recordCommandFailure(id, err, email = null) {
   return { ok: false, error: message };
 }
 
-export async function executeCommandAsync(cmd) {
-  if (cmd?.type !== "refresh") return executeCommandPayload(cmd);
-  if (!isPendingCommand(cmd)) return null;
+export async function executeCommandAsync(cmd, { receivedAt } = {}) {
+  if (cmd?.type !== "refresh") return executeCommandPayload(cmd, { receivedAt });
+  if (!isPendingCommand(cmd, receivedAt)) return null;
 
   try {
     const result = await refreshCliAccounts({ force: true });
@@ -2115,8 +2165,8 @@ export async function executeCommandAsync(cmd) {
   }
 }
 
-export function executeCommandPayload(cmd) {
-  if (!isPendingCommand(cmd)) return null;
+export function executeCommandPayload(cmd, { receivedAt } = {}) {
+  if (!isPendingCommand(cmd, receivedAt)) return null;
 
   try {
     let result;

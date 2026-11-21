@@ -31,6 +31,7 @@ export const quota = (c5, c7, at = Date.now()) => ({ at, quota: { plan: "Google 
 export async function fixture(options = {}) {
   const files = new Map(), dirs = new Set(["/"]), calls = [];
   const readErrors = new Map();
+  const renameErrors = new Map();
   let keychain = options.keychain ? JSON.stringify(options.keychain) : null;
   let keychainWrites = 0;
   const mockFs = {
@@ -44,7 +45,12 @@ export async function fixture(options = {}) {
       return enc ? content.toString() : Buffer.from(content);
     },
     writeFileSync(p, content) { files.set(String(p), Buffer.from(content)); },
+    unlinkSync(p) { files.delete(String(p)); },
+    rmSync(p) { files.delete(String(p)); },
     renameSync(from, to) {
+      if (renameErrors.has(String(to))) {
+        throw Object.assign(new Error("fixture rename denied"), { code: renameErrors.get(String(to)) });
+      }
       assert(files.has(String(from)), "fixture rename source must exist");
       files.set(String(to), files.get(String(from))); files.delete(String(from));
     }
@@ -77,8 +83,9 @@ export async function fixture(options = {}) {
         }
       }
       if (cmd === "agy" && args[0] === "--version" && options.agyVersion) return options.agyVersion;
-      if (cmd === "ps") return (options.liveStatus || options.running)
-        ? "fixture 4242 0 0 0 0 ?? S 0:00 /Applications/Antigravity.app/Contents/Resources/bin/language_server --csrf_token abc-def" : "";
+      if (cmd === "ps") return options.fakeProcessList ?? ((options.liveStatus || options.running)
+        ? "4242 /Applications/Antigravity.app/Contents/Resources/bin/language_server" +
+          (args.includes("pid=,args=") ? " --csrf_token abc-def" : "") : "");
       if (cmd === "lsof") return "server 4242 fixture TCP 127.0.0.1:40001 (LISTEN)";
       if (cmd === "open") return "";
       if (cmd === "curl") {
@@ -109,7 +116,7 @@ export async function fixture(options = {}) {
   });
   await mod.evaluate();
   const core = mod.namespace;
-  return { core, files, calls, options, readErrors, fs: mockFs,
+  return { core, files, calls, options, readErrors, renameErrors, fs: mockFs,
     write(p, value) { mockFs.writeFileSync(p, JSON.stringify(value)); },
     read(p) { return JSON.parse(mockFs.readFileSync(p, "utf8")); },
     keychainRaw() { return keychain; },

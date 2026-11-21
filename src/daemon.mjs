@@ -1,12 +1,12 @@
 /**
  * [INPUT]: core.mjs、插件指令文件与本地文件变更。
  * [OUTPUT]: 两种分发包名的指令解析、后台监听器与页面状态同步。
- * [POS]: Magpie 插件的独立后台进程；按源码签名热重载。
+ * [POS]: Magpie 插件的独立后台进程；使用系统文件锁保持单实例，空闲时热重载。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   PATHS,
@@ -20,6 +20,13 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CORE_PATH = path.join(__dirname, "core.mjs");
+const MUTEX_PATH = `${PATHS.daemonLock}.lock`;
+const HANDOFF_PATH = `${PATHS.daemonLock}.next`;
+const HANDOFF_SECONDS = 90;
+const DAEMON_FD = 3;
+const DAEMON_FLAG = "--daemon";
+const WAIT_FOR_LOCK_FLAG = "--daemon-wait";
+const INHERITED_LOCK_FLAG = "--daemon-with-lock";
 
 function getCodeSignature() {
   try {
@@ -33,64 +40,99 @@ function getCodeSignature() {
 
 const INITIAL_SIGNATURE = getCodeSignature();
 
-function isPidAlive(pid) {
-  if (!pid || typeof pid !== "number") return false;
+// lockf locks the open file description. Passing the descriptor to the child
+// keeps the lock held across startup and reload, and the OS releases it on exit.
+function lockDescriptor(fd, waitSeconds = 0) {
   try {
-    process.kill(pid, 0);
+    execFileSync("/usr/bin/lockf", ["-s", "-t", String(waitSeconds), String(DAEMON_FD)], {
+      stdio: ["ignore", "ignore", "ignore", fd]
+    });
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (err.status === 75) return false;
+    throw new Error("无法锁定 Antigravity Switch 后台监听");
   }
 }
 
-function readLock() {
+function openDaemonLock(waitSeconds) {
+  fs.mkdirSync(PATHS.magpieDir, { recursive: true });
+  const fd = fs.openSync(MUTEX_PATH, "a", 0o600);
   try {
-    if (!fs.existsSync(PATHS.daemonLock)) return null;
-    return JSON.parse(fs.readFileSync(PATHS.daemonLock, "utf8"));
+    if (lockDescriptor(fd, waitSeconds)) return fd;
+  } catch (err) {
+    fs.closeSync(fd);
+    throw err;
+  }
+  fs.closeSync(fd);
+  return null;
+}
+
+function inheritedDaemonLock() {
+  const inherited = fs.fstatSync(DAEMON_FD);
+  const mutex = fs.statSync(MUTEX_PATH);
+  if (inherited.dev !== mutex.dev || inherited.ino !== mutex.ino || !lockDescriptor(DAEMON_FD)) {
+    throw new Error("Antigravity Switch 后台监听未继承有效的锁");
+  }
+  return DAEMON_FD;
+}
+
+function readWatcherInfo() {
+  try {
+    const info = JSON.parse(fs.readFileSync(PATHS.daemonLock, "utf8"));
+    return info.version === 2 ? info : null;
   } catch {
     return null;
   }
 }
 
-function writeLock(pid) {
-  fs.mkdirSync(path.dirname(PATHS.daemonLock), { recursive: true });
-  fs.writeFileSync(
-    PATHS.daemonLock,
-    JSON.stringify(
-      {
-        pid,
-        signature: INITIAL_SIGNATURE,
-        startedAt: new Date().toISOString(),
-        script: __filename
-      },
-      null,
-      2
-    ),
-    { encoding: "utf8", mode: 0o600 }
-  );
+function writeDaemonRecord(file, value) {
+  const tmp = `${file}.tmp-${process.pid}`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
 }
 
-export function ensureBackgroundWatcher() {
-  const existing = readLock();
-  const currentSig = getCodeSignature();
-  if (existing && isPidAlive(existing.pid)) {
-    if (existing.script === __filename && existing.signature === currentSig) {
-      return { started: false, pid: existing.pid };
-    }
-    try {
-      process.kill(existing.pid, "SIGTERM");
-    } catch {
-      // ignore
-    }
+function requestedScript() {
+  try {
+    const { script, requestedAt } = JSON.parse(fs.readFileSync(HANDOFF_PATH, "utf8"));
+    const age = Date.now() - requestedAt;
+    return typeof script === "string" && age >= 0 && age < HANDOFF_SECONDS * 1000 ? script : null;
+  } catch {
+    return null;
   }
+}
 
-  const child = spawn(process.execPath, [__filename, "--daemon"], {
+function spawnWatcher(mode, fd) {
+  const child = spawn(process.execPath, [__filename, mode], {
     detached: true,
-    stdio: "ignore",
-    env: { ...process.env, MAGPIE_AGY_SWITCH_DAEMON: "1" }
+    stdio: fd === undefined ? "ignore" : ["ignore", "ignore", "ignore", fd]
   });
+  child.on("error", () => {});
+  if (!child.pid) throw new Error("无法启动 Antigravity Switch 后台监听");
   child.unref();
-  return { started: true, pid: child.pid };
+  return child.pid;
+}
+
+export function ensureBackgroundWatcher({ forPage = false } = {}) {
+  const fd = openDaemonLock();
+  if (fd === null) {
+    const current = readWatcherInfo();
+    // A Magpie installation can move to a different directory. The old
+    // watcher yields while the new one waits for the same kernel lock.
+    if (forPage && current?.script && current.script !== __filename && requestedScript() !== __filename) {
+      writeDaemonRecord(HANDOFF_PATH, { script: __filename, requestedAt: Date.now() });
+      spawnWatcher(WAIT_FOR_LOCK_FLAG);
+    }
+    return { started: false, pid: current?.pid || null };
+  }
+  try {
+    return { started: true, pid: spawnWatcher(INHERITED_LOCK_FLAG, fd) };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // Both distribution names use the same existing vault and command format.
@@ -112,146 +154,128 @@ export function readPendingCommand(raw) {
   return null;
 }
 
-export function startInProcessWatcher() {
+function startInProcessWatcher(reloadIfChanged) {
   let lastCmdId = null;
   let debounceTimer = null;
-  let cmdQueue = Promise.resolve();
-  let backgroundRefresh = null;
+  let queue = Promise.resolve();
+  let pendingJobs = 0;
   let lastCliRefreshAt = 0;
 
-  const triggerBackgroundRefresh = () => {
-    if (backgroundRefresh) return backgroundRefresh;
-    lastCliRefreshAt = Date.now();
-    backgroundRefresh = Promise.resolve()
-      .then(() => refreshCliAccounts({ force: false }))
-      .catch(() => {
-        // Non-fatal background refresh error
-      })
-      .finally(() => {
-        backgroundRefresh = null;
-      });
-    return backgroundRefresh;
+  const enqueue = (task) => {
+    pendingJobs++;
+    queue = queue.then(task).catch(() => {
+      // Command and cache errors must not stop the watcher.
+    }).finally(() => {
+      pendingJobs--;
+    });
   };
 
-  const checkPluginsCommand = () => {
+  const triggerBackgroundRefresh = () => {
+    if (pendingJobs || Date.now() - lastCliRefreshAt < 60_000) return;
+    lastCliRefreshAt = Date.now();
+    enqueue(() => refreshCliAccounts({ force: false }));
+  };
+
+  const syncFromDisk = () => {
     try {
-      if (!fs.existsSync(PATHS.pluginsJson)) return;
       const raw = JSON.parse(fs.readFileSync(PATHS.pluginsJson, "utf8"));
       const cmd = readPendingCommand(raw);
-      if (cmd && cmd.id && cmd.id !== lastCmdId) {
+      if (cmd?.id && cmd.id !== lastCmdId) {
         lastCmdId = cmd.id;
-        cmdQueue = cmdQueue
-          .then(() => executeCommandAsync(cmd))
-          .catch(() => {
-            // ignore transient command execution errors
-          });
+        const receivedAt = Date.now();
+        enqueue(() => executeCommandAsync(cmd, { receivedAt }));
       }
     } catch {
-      // ignore transient read errors
+      // Retried after the next file event or periodic sync.
     }
-  };
-
-  const scheduleSync = () => {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      try {
-        checkPluginsCommand();
-        syncStateFile();
-      } catch {
-        // ignore
-      }
-    }, 60);
-  };
-
-  syncStateFile();
-  checkPluginsCommand();
-
-  const watchedDirs = [
-    PATHS.magpieDir,
-    path.dirname(PATHS.cliToken),
-    path.dirname(PATHS.appStorage)
-  ];
-
-  const watchers = [];
-  for (const dir of watchedDirs) {
-    try {
-      if (fs.existsSync(dir)) {
-        const watcher = fs.watch(dir, { persistent: true }, (_eventType, filename) => {
-          if (!filename || filename.includes(".tmp-")) return;
-          if (
-            filename === "plugins.json" ||
-            filename === "logins.json" ||
-            filename === "plugin-auth.json" ||
-            filename === "antigravity-switch-cli-cache.json" ||
-            filename === "quotas.json" ||
-            filename === "antigravity-oauth-token" ||
-            filename === "app_storage.json"
-          ) {
-            scheduleSync();
-          }
-        });
-        watchers.push(watcher);
-      }
-    } catch {
-      // ignore missing directory
-    }
-  }
-
-  const initialRefreshTimer = setTimeout(() => {
-    triggerBackgroundRefresh();
-  }, 300);
-
-  const interval = setInterval(() => {
-    if (process.argv.includes("--daemon") && getCodeSignature() !== INITIAL_SIGNATURE) {
-      try {
-        const child = spawn(process.execPath, [__filename, "--daemon"], {
-          detached: true,
-          stdio: "ignore",
-          env: { ...process.env, MAGPIE_AGY_SWITCH_DAEMON: "1" }
-        });
-        child.unref();
-      } catch {
-        // ignore
-      }
-      process.exit(0);
-    }
-    checkPluginsCommand();
     try {
       syncStateFile();
     } catch {
       // A transient state-file write failure must not stop future recovery.
     }
-    if (Date.now() - lastCliRefreshAt >= 60_000) {
-      triggerBackgroundRefresh();
+  };
+
+  const scheduleSync = () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(syncFromDisk, 60);
+  };
+
+  syncFromDisk();
+  const watchedDirs = [
+    PATHS.magpieDir,
+    path.dirname(PATHS.cliToken),
+    path.dirname(PATHS.appStorage)
+  ];
+  const watchedFiles = new Set([
+    "plugins.json", "logins.json", "plugin-auth.json",
+    "antigravity-switch-cli-cache.json", "quotas.json",
+    "antigravity-oauth-token", "jetski-standalone-oauth-token", "app_storage.json"
+  ]);
+  const watchers = [];
+  for (const dir of new Set(watchedDirs)) {
+    try {
+      watchers.push(fs.watch(dir, { persistent: true }, (_eventType, filename) => {
+        if (watchedFiles.has(filename)) scheduleSync();
+      }));
+      watchers.at(-1).on("error", () => {
+        // The periodic sync also covers removed or unavailable directories.
+      });
+    } catch {
+      // The periodic sync covers directories that do not exist yet.
     }
+  }
+
+  const initialRefreshTimer = setTimeout(triggerBackgroundRefresh, 300);
+  const interval = setInterval(() => {
+    if (!pendingJobs && reloadIfChanged()) return;
+    syncFromDisk();
+    triggerBackgroundRefresh();
   }, 4000);
 
   return () => {
+    clearTimeout(debounceTimer);
     clearTimeout(initialRefreshTimer);
     clearInterval(interval);
-    for (const w of watchers) {
-      try {
-        w.close();
-      } catch {
-        // ignore
-      }
-    }
+    for (const watcher of watchers) watcher.close();
   };
 }
 
-if (process.argv.includes("--once")) {
-  syncStateFile();
-  ensureBackgroundWatcher();
-} else if (process.argv.includes("--daemon")) {
-  const existing = readLock();
-  if (
-    existing &&
-    existing.pid !== process.pid &&
-    isPidAlive(existing.pid) &&
-    existing.signature === INITIAL_SIGNATURE
-  ) {
-    process.exit(0);
+function runDaemon(fd) {
+  if (fd === null) return;
+  if (requestedScript() === __filename) fs.rmSync(HANDOFF_PATH, { force: true });
+  writeDaemonRecord(PATHS.daemonLock, {
+    version: 2,
+    pid: process.pid,
+    signature: INITIAL_SIGNATURE,
+    startedAt: new Date().toISOString(),
+    script: __filename
+  });
+  const stop = startInProcessWatcher(() => {
+    const next = requestedScript();
+    const handoff = next && next !== __filename;
+    const signature = getCodeSignature();
+    if (!handoff && signature === INITIAL_SIGNATURE) return false;
+    if (!handoff && signature !== "unknown") {
+      try {
+        spawnWatcher(INHERITED_LOCK_FLAG, fd);
+      } catch {
+        return false;
+      }
+    }
+    stop();
+    fs.closeSync(fd);
+    return true;
+  });
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  const mode = process.argv[2];
+  if (mode === "--once") {
+    syncStateFile();
+    ensureBackgroundWatcher();
+  } else if (mode === DAEMON_FLAG || mode === WAIT_FOR_LOCK_FLAG) {
+    runDaemon(openDaemonLock(mode === WAIT_FOR_LOCK_FLAG ? HANDOFF_SECONDS : 0));
+  } else if (mode === INHERITED_LOCK_FLAG) {
+    runDaemon(inheritedDaemonLock());
   }
-  writeLock(process.pid);
-  startInProcessWatcher();
 }
