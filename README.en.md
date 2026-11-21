@@ -4,6 +4,12 @@
 
 View and switch local Antigravity desktop and CLI accounts from Magpie. The page follows Magpie's language and displays the accounts registered under its agy-cli provider.
 
+## What's new in 0.2.1
+
+- Fixed a macOS reboot issue that could prevent Magpie from receiving quota refresh results.
+- Account switching restores updated files after a failure and checks that credentials belong to the selected account.
+- `switch --help` displays help, invalid switch options report an error, and the page keeps the latest refresh result.
+
 ## Install
 
 Requires macOS, Magpie 0.1.2670 or later, and an existing Antigravity desktop or agy CLI sign-in. Open **Antigravity Switch** from the Magpie sidebar after installation.
@@ -11,13 +17,13 @@ Requires macOS, Magpie 0.1.2670 or later, and an existing Antigravity desktop or
 From npm:
 
 ```sh
-magpie plugin add npm:magpie-antigravity-switch@0.2.0
+magpie plugin add npm:magpie-antigravity-switch@0.2.1
 ```
 
 From GitHub:
 
 ```sh
-magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.0
+magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.1
 ```
 
 ## Accounts and quotas
@@ -35,7 +41,7 @@ Sign-ins and backups stay on this Mac. Existing Keychain access permissions are 
 The standalone CLI requires Node.js 24 or later.
 
 ```sh
-npm install --global magpie-antigravity-switch@0.2.0
+npm install --global magpie-antigravity-switch@0.2.1
 magpie-agy-switch status
 magpie-agy-switch switch user@example.com --target=cli
 ```
