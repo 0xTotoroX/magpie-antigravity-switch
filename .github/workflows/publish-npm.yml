@@ -1,0 +1,109 @@
+# [INPUT]: GitHub Release tag, its approved tarball SHA-256, and manual publish choice.
+# [OUTPUT]: npm identity check or publication of the exact GitHub Release artifact.
+# [POS]: The project’s only npm publisher, using GitHub Actions OIDC.
+# [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
+name: Publish npm package
+run-name: npm ${{ inputs.publish && 'publish' || 'verify' }} ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published GitHub Release tag (vX.Y.Z)
+        type: string
+        required: true
+      sha256:
+        description: SHA-256 of the approved release tarball
+        type: string
+        required: true
+      publish:
+        description: Publish to npm after the release notes and tarball are approved
+        type: boolean
+        default: false
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  npm:
+    if: github.repository == '0xTotoroX/magpie-antigravity-switch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: npm-release
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download and verify the approved tarball
+        id: archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_SHA256: ${{ inputs.sha256 }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || ! "$RELEASE_SHA256" =~ ^[[:xdigit:]]{64}$ ]]; then
+            echo "::error::Enter a stable release tag and a 64-digit SHA-256."
+            exit 1
+          fi
+          if [[ "$PUBLISH" == true && "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]]; then
+            echo "::error::To publish, run this workflow from the requested release tag so provenance points to its source."
+            exit 1
+          fi
+
+          version="${RELEASE_TAG#v}"
+          filename="magpie-antigravity-switch-$version.tgz"
+          archive="$RUNNER_TEMP/$filename"
+          release="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease)"
+          if ! jq -e '.isDraft == false and .isPrerelease == false' <<< "$release" > /dev/null; then
+            echo "::error::Publish the approved GitHub Release before dispatching the npm workflow."
+            exit 1
+          fi
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$filename" --output "$archive"
+          printf '%s  %s\n' "${RELEASE_SHA256,,}" "$archive" | sha256sum --check
+          tar -xOzf "$archive" package/package.json |
+            jq -e --arg version "$version" '.name == "magpie-antigravity-switch" and .version == $version' > /dev/null
+          printf 'path=%s\n' "$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Verify npm recognizes this workflow
+        if: ${{ !inputs.publish }}
+        run: |
+          node --input-type=module <<'JS'
+          const requestURL = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL);
+          requestURL.searchParams.set("audience", "npm:registry.npmjs.org");
+          const oidc = await fetch(requestURL, {
+            headers: { Authorization: "Bearer " + process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN },
+            signal: AbortSignal.timeout(20_000)
+          });
+          if (!oidc.ok) throw new Error("GitHub identity request returned HTTP " + oidc.status);
+          const { value } = await oidc.json();
+          if (!value) throw new Error("GitHub did not return an identity token");
+
+          const npm = await fetch(
+            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/magpie-antigravity-switch",
+            {
+              method: "POST",
+              headers: { Authorization: "Bearer " + value },
+              signal: AbortSignal.timeout(20_000)
+            }
+          );
+          if (!npm.ok) throw new Error("npm trusted publisher check returned HTTP " + npm.status);
+          if (!(await npm.json()).token) throw new Error("npm did not return a publishing token");
+          console.log("npm accepted the GitHub Actions identity. The verification made no publish request.");
+          JS
+
+      - name: Publish the approved archive
+        if: inputs.publish
+        env:
+          ARCHIVE: ${{ steps.archive.outputs.path }}
+        run: npm publish "$ARCHIVE" --registry=https://registry.npmjs.org/ --access public --ignore-scripts

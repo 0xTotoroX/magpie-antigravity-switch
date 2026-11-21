@@ -12,6 +12,7 @@ macOS 上的 Magpie 页面插件与 CLI，使用 JavaScript ES modules、Node.js
 - [page](page/AGENTS.md)：Magpie 沙箱中的经典脚本页面。
 - [test](test/AGENTS.md)：使用假凭据、内存文件系统与子进程替身的回归测试。
 - `package.json`：插件页面、CLI 入口、发布文件范围与 `npm test`。
+- [publish-npm.yml](.github/workflows/publish-npm.yml) 仅供手动验证 npm 授权或发布。用户审核发布说明及产物后，从正式 Release tag 触发发布，上传前核对 GitHub Release 附件的 SHA-256。
 
 ## 数据与验证边界
 
