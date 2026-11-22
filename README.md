@@ -78,7 +78,7 @@ node index.mjs members-only on
 
 页面的「刷新」同步 Magpie 的 agy-cli 供应商名单，并通过 Magpie 查询启用账号的套餐与额度。已移除的账号从列表消失，停用账号归入「不可用账号」。额度查询失败时显示原因，并保留同一登录此前仍有效的额度。未返回的窗口显示「未知」，过期读数显示「待刷新」。
 
-套餐标签沿用 Magpie 返回的原名。账号升级后若仍显示旧 Starter 标签，请参见 [Magpie 套餐刷新问题 #5621](https://github.com/yetone/magpie/issues/5621)；本插件不会自行推断或修改订阅档位。
+套餐优先显示 agy-cli 返回的原名。缺少套餐名时，插件按邮箱读取 Magpie 中保存的 Antigravity 登录记录，并在套餐旁标明「上次记录」。查看其他账号的记录无需切换登录。账号升级后若仍显示旧 Starter 标签，请参见 [Magpie 套餐刷新问题 #5621](https://github.com/yetone/magpie/issues/5621)；本插件不会自行推断或修改订阅档位。
 
 账号凭据和备份保存在本机，不随插件发布。macOS 可能要求访问钥匙串；拒绝授权时操作停止。请只在自己有权使用的账号之间切换。
 

@@ -7,7 +7,7 @@
 
 macOS 本地 agy 1.5+ 的 CLI 启动身份来自共享钥匙串，状态通过 `cliUsesSharedLogin` 告知页面。旧 CLI 与 SSH 会话沿用登录文件。更新后回读目标账号。
 
-核心将 Magpie agy-cli 供应商名单与额度投影到 `page/state.js`，按登录记录与凭据登记交叉核对，识别移除、停用与登录失效。刷新只查询已启用的供应商账号。页面骨架由 `page/index.html` 提供，账号渲染由 `page/app.js` 负责，不保留第二套 HTML 生成逻辑。
+核心将 Magpie agy-cli 供应商名单与额度投影到 `page/state.js`，按登录记录与凭据登记交叉核对，识别移除、停用与登录失效。刷新只查询已启用的供应商账号。agy-cli 读数缺少套餐名时可按邮箱从 Antigravity 登录记录取名，快照用 `planFromLoginRecord` 标记来源。页面骨架由 `page/index.html` 提供，账号渲染由 `page/app.js` 负责，不保留第二套 HTML 生成逻辑。
 
 备份 `manifest.json` 逐项记录 SHA-256 或明确不存在；所有文件校验完成后才保存 `initialBackupPath`。旧备份保留，通过新清单的 `previousBackupPath` 回溯。
 

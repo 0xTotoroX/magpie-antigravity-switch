@@ -30,7 +30,7 @@ magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.1
 
 **Refresh** syncs the agy-cli provider list and asks Magpie to refresh enabled accounts' quotas. Disabled accounts appear under **Unavailable accounts**. A failed refresh shows an error and keeps the previous quota while it remains valid.
 
-The table shows the 5-hour and weekly windows reported for GPT / Claude, Gemini, and Gemini 4 Argon. Gemini 4 Carbon appears when a separate Carbon quota is returned. **Unknown**, **Needs refresh**, and **0%** represent different states. Google AI Pro, Ultra, and Enterprise plan names follow the provider's reading.
+The table shows the 5-hour and weekly windows reported for GPT / Claude, Gemini, and Gemini 4 Argon. Gemini 4 Carbon appears when a separate Carbon quota is returned. **Unknown**, **Needs refresh**, and **0%** represent different states. The plan badge uses the name returned by agy-cli. If the provider omits it, the plugin looks up the saved Antigravity sign-in for the same email and labels the plan **Last recorded**. You can view these records without switching accounts.
 
 On macOS with local agy 1.5 or later, **CLI only** updates the Keychain sign-in used by new CLI processes and shared with the desktop app. Reconnect an existing CodexHost session to use the new CLI sign-in. A pending desktop change is marked until the running account can be verified.
 

@@ -581,6 +581,58 @@ test("the page mirrors the agy-cli provider rather than the local backup", async
   assert.equal(f.keychain().id_token_email, "local@example.test");
 });
 
+test("missing agy-cli plan falls back to a named Antigravity login without switching or borrowing quotas", async () => {
+  const email = "reader@example.test", active = "active@example.test";
+  const f = await fixture({ keychain: auth(active), agyVersion: "1.5.12" });
+  const { loginsJson, pluginAuthJson, quotasJson, cliQuotaCache } = f.core.PATHS;
+  const cliLogin = { agent: "plugin:agy-cli", user: email, home: "agy-cli#reader", on: true };
+  const saved = { agent: "plugin:antigravity", user: email.toUpperCase(), plan: "Google AI Pro" };
+  const incidental = [
+    { ...saved, user: "different@example.test", plan: "Enterprise" },
+    { ...saved, hidden: true, plan: "Hidden plan" },
+    { ...saved, user: "Alias", home: cliLogin.home, plan: "Other login" }
+  ];
+  f.write(pluginAuthJson, { [cliLogin.home]: { type: "api", metadata: { email } } });
+  f.write(loginsJson, [cliLogin, ...incidental, saved]);
+  const earlier = new Date(Date.now() - 60000).toISOString();
+  const now = new Date().toISOString();
+  const windows = [{ name: "Gemini · 5 hours", used: 40, resetsAt: future() }];
+  f.write(quotasJson, {
+    [`agy-cli/${email}`]: { at: earlier, quota: { plan: "Old quota plan", windows } },
+    [`antigravity/${email}`]: { at: now, quota: { plan: "Other provider", windows: [
+      { name: "Gemini · 7 days", used: 10, resetsAt: future() }
+    ] } }
+  });
+  const cachePlan = (plan) => f.write(cliQuotaCache, { accounts: {
+    [email]: { providerHome: cliLogin.home, fetchedAt: now, quota: { plan, windows } }
+  } });
+  cachePlan("  ");
+  const state = f.core.syncStateFile();
+  assert.equal(state.current.cliEmail, active);
+  assert.deepEqual(Array.from(state.accounts, a => a.email), [email]);
+  const [row] = state.accounts;
+  assert.equal(row.plan, saved.plan);
+  assert.equal(row.planFromLoginRecord, true);
+  assert.equal(row.isPaid, true);
+  assert.equal(row.quota.plan, null);
+  assert.deepEqual(Array.from(row.quota.pools, p => p.remaining), [60]);
+
+  cachePlan("Google AI Ultra");
+  const direct = f.core.syncStateFile().accounts[0];
+  assert.equal(direct.plan, "Google AI Ultra");
+  assert.equal(direct.planFromLoginRecord, false);
+
+  cachePlan(null);
+  f.write(loginsJson, [cliLogin, ...incidental, { ...saved, agent: "antigravity" }]);
+  assert.equal(f.core.syncStateFile().accounts[0].plan, saved.plan);
+  f.write(loginsJson, [cliLogin, ...incidental]);
+  const unknown = f.core.syncStateFile().accounts[0];
+  assert.equal(unknown.tierLabel, "套餐未知");
+  assert.equal(unknown.planFromLoginRecord, false);
+  assert.deepEqual(f.read(loginsJson), [cliLogin, ...incidental]);
+  assert.equal(f.keychain().id_token_email, active);
+});
+
 test("refresh queries only enabled Magpie accounts and rereads the roster after a deletion", async () => {
   const enabled = { agent: "plugin:agy-cli", user: "enabled@example.test", home: "agy-cli", on: true };
   const disabled = { agent: "plugin:agy-cli", user: "off@example.test", home: "agy-cli#off", on: false };

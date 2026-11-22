@@ -242,6 +242,20 @@ test("the page follows Magpie language changes and leaves provider plans intact"
   assert.equal(p.el("toastBanner").textContent, "已同步 1 个账号，已刷新 1 个账号的额度");
 });
 
+test("the plan badge labels saved names in both languages and drops the note when a provider supplies the name", () => {
+  const state = baseState();
+  const row = { email: "saved@example.test", isEligible: true, plan: "Google AI Pro", planFromLoginRecord: true };
+  state.accounts = [row, { ...row, email: "off@example.test", isEligible: false, tierLabel: "已停用" }];
+  const p = page(state);
+  assert.match(p.el("accountList").innerHTML, /Google AI Pro · 上次记录</);
+  assert.doesNotMatch(p.el("unavailableList").innerHTML, /上次记录/);
+  p.setLanguage("en-US");
+  assert.match(p.el("accountList").innerHTML, /Google AI Pro · Last recorded</);
+  p.render({ ...state, accounts: [{ ...row, planFromLoginRecord: false }] });
+  assert.match(p.el("accountList").innerHTML, /Google AI Pro</);
+  assert.doesNotMatch(p.el("accountList").innerHTML, /Last recorded/);
+});
+
 test("English shows recoverable configuration errors and disabled provider status", () => {
   const p = page({ ...baseState(), error: "logins.json 格式无效，已保留原文件" }, "en");
   assert.equal(p.el("toastBanner").textContent, "logins.json has an invalid format. The original file was preserved.");

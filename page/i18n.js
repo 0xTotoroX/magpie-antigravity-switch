@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Magpie 主题语言与页面、后台状态文案。
- * [OUTPUT]: 中英文文案、读数时间与常见后台反馈翻译。
+ * [OUTPUT]: 中英文文案、历史套餐标记、读数时间与常见后台反馈翻译。
  * [POS]: Magpie 沙箱中的经典脚本，必须先于 app.js 加载。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -25,6 +25,7 @@
     members: ["会员账号", "Paid accounts"],
     freeAccounts: ["免费账号", "Free accounts"],
     planUnknown: ["套餐未知", "Unknown plan"],
+    lastRecordedPlan: ["上次记录", "Last recorded"],
     unavailable: ["不可用", "Unavailable"],
     disabled: ["已停用", "Disabled"],
     activateDesktop: ["应用桌面端", "Apply to Desktop"],

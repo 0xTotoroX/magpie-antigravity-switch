@@ -1,6 +1,6 @@
 /**
  * [INPUT]: state.js 账号快照、i18n.js 文案与 Magpie 页面桥接。
- * [OUTPUT]: 按账号类型分组的 Magpie 模型额度、原始档位、行内登录状态与历史读数时间。
+ * [OUTPUT]: 按账号类型分组的 Magpie 模型额度、套餐及上次记录标记、行内登录状态与历史读数时间。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -171,6 +171,8 @@
     const tierLabel = account.isEligible && account.plan
       ? account.plan
       : i18n.stateLabel(account.tierLabel) || t(isPaid ? "member" : "planUnknown");
+    const planNote = account.isEligible && account.plan && account.planFromLoginRecord
+      ? " · " + t("lastRecordedPlan") : "";
     const quotaIssue = account.isEligible
       ? quotaNotice(account.quota)
       : i18n.backend(account.ineligibleReason);
@@ -208,7 +210,7 @@
             <span class="account-email">${escapeHtml(account.email)}</span>
             ${statusTags}
           </div>
-          <div class="account-tags"><span class="tag ${tierClass}">${escapeHtml(tierLabel)}</span></div>
+          <div class="account-tags"><span class="tag ${tierClass}">${escapeHtml(tierLabel + planNote)}</span></div>
           ${quotaIssue ? `<span class="account-issue">${escapeHtml(quotaIssue)}</span>` : ""}
         </div>
         ${renderQuotaGrid(account, quotaGroups)}

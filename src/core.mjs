@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Magpie logins/plugin-auth/配额 JSON、隔离 agyHome 令牌、macOS security 与 language_server 登录身份。
- * [OUTPUT]: Magpie 单一来源（兼容 legacy antigravity、plugin:antigravity 与 plugin:agy-cli）的套餐、配额窗口及其读数时间、会员分类、登录状态、校验备份、账号操作与无凭据的 page/state.js。
+ * [OUTPUT]: Magpie 套餐及登录记录兜底标记、配额窗口及读数时间、会员分类、登录状态、校验备份、账号操作与无凭据的 page/state.js。
  * [POS]: CLI 与守护进程共用核心；状态脚本供 page/app.js 渲染，运行身份与待生效凭据分别返回。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -786,7 +786,7 @@ function findCliCacheEntry(cliCache, email) {
   return null;
 }
 
-function resolveQuotaForEmail(email, quotas, cliCache = null, providers = QUOTA_PROVIDER_PREFIXES) {
+function resolveQuotaForEmail(email, quotas, cliCache = null, agyCliOnly = false) {
   const candidates = [];
   const cliEntry = findCliCacheEntry(cliCache, email);
   if (cliEntry) {
@@ -808,7 +808,7 @@ function resolveQuotaForEmail(email, quotas, cliCache = null, providers = QUOTA_
       });
     }
   }
-  for (const provider of providers) {
+  for (const provider of agyCliOnly ? ["agy-cli"] : QUOTA_PROVIDER_PREFIXES) {
     const entry = findQuotaEntry(quotas, provider, email);
     const summary = summarizeQuotaEntry(entry);
     if (!summary) continue;
@@ -817,25 +817,19 @@ function resolveQuotaForEmail(email, quotas, cliCache = null, providers = QUOTA_
   }
   if (candidates.length === 0) return null;
 
-  const withPlan = [...candidates]
-    .filter((c) => typeof c.summary.plan === "string" && c.summary.plan.trim())
-    .sort((a, b) => b.atMs - a.atMs || Number(b.fromCliCache) - Number(a.fromCliCache));
-  const resolvedPlan = withPlan[0]?.summary.plan || null;
-
-  const healthyWithPools = candidates
-    .filter((c) => !c.summary.error && c.summary.pools.length > 0)
-    .sort((a, b) => b.atMs - a.atMs || Number(b.fromCliCache) - Number(a.fromCliCache));
-  const healthy = candidates
-    .filter((c) => !c.summary.error)
-    .sort((a, b) => b.atMs - a.atMs || Number(b.fromCliCache) - Number(a.fromCliCache));
-  const errored = [...candidates].sort((a, b) => b.atMs - a.atMs || Number(b.fromCliCache) - Number(a.fromCliCache));
-
-  const selected = healthyWithPools[0] || healthy[0] || errored[0];
+  candidates.sort((a, b) => b.atMs - a.atMs || Number(b.fromCliCache) - Number(a.fromCliCache));
+  const healthy = candidates.filter((c) => !c.summary.error);
+  const selected = healthy.find((c) => c.summary.pools.length) || healthy[0] || candidates[0];
+  // For the page, a newer reading can omit the plan even when an older copy still has one.
+  const planReading = agyCliOnly ? healthy[0] : candidates.find(
+    (c) => typeof c.summary.plan === "string" && c.summary.plan.trim()
+  );
+  const plan = planReading?.summary.plan;
   const cliErr = cliEntry?.refreshError || (cliEntry?.error && !selected.summary.error ? cliEntry.error : null);
   return {
     ...selected.summary,
     provider: selected.provider,
-    plan: resolvedPlan || selected.summary.plan || null,
+    plan: typeof plan === "string" && plan.trim() ? plan.trim() : null,
     refreshError: selected.summary.refreshError || cliErr || null
   };
 }
@@ -1111,7 +1105,7 @@ function buildState(inputs, agyCliOnly = false) {
     const pluginCreds = collectPluginCredentialsForEmail(email, matchingLogins, pluginCredentials);
     const vaultEntry = vault.accounts?.[email] || null;
     const cliCacheEntry = findCliCacheEntry(cliCache, email);
-    const quotaSummary = resolveQuotaForEmail(email, quotas, cliCache, agyCliOnly ? ["agy-cli"] : undefined);
+    const quotaSummary = resolveQuotaForEmail(email, quotas, cliCache, agyCliOnly);
 
     const credCandidates = collectCredentialCandidates(email, matchingLogins, pluginCredentials, vaultEntry);
     const hasLegacyAccessOnly = matchingLogins.some(
@@ -1119,8 +1113,12 @@ function buildState(inputs, agyCliOnly = false) {
     );
     const hasCredentials = credCandidates.length > 0 || hasLegacyAccessOnly;
 
-    const loginPlan = resolveLoginPlan(matchingLogins);
-    const rawPlan = quotaSummary?.plan || loginPlan || null;
+    const savedAntigravityLogins = agyCliOnly && !quotaSummary?.plan ? logins.filter((item) =>
+      !item?.hidden && (item?.agent === "plugin:antigravity" || item?.agent === "antigravity") &&
+      getLoginEmail(item)?.toLowerCase() === email.toLowerCase()
+    ) : [];
+    const loginPlan = resolveLoginPlan([...savedAntigravityLogins, ...matchingLogins]);
+    const rawPlan = quotaSummary?.plan || loginPlan;
 
     const hasPluginPresence =
       matchingLogins.some((item) => isPluginLoginAgent(item.agent)) ||
@@ -1164,6 +1162,7 @@ function buildState(inputs, agyCliOnly = false) {
       email,
       name: resolveLoginItemEmail(loginEntry, pluginCredentials) || email,
       plan: planInfo.name,
+      planFromLoginRecord: !quotaSummary?.plan && Boolean(loginPlan),
       tierLabel,
       planFamily: planInfo.family,
       isPaid: planInfo.isPaid,
