@@ -87,7 +87,7 @@ body {
   gap: 5px;
   min-height: 24px;
   padding: 0 8px;
-  border: 1px solid light-dark(var(--control-border), transparent);
+  border: 1px solid light-dark(#c4c4c4, #474747);
   border-radius: 6px;
   background: transparent;
   color: light-dark(var(--secondary), var(--magpie-muted, #8b8b94));
