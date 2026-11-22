@@ -1,41 +1,29 @@
 /*
  * [INPUT]: Magpie 主题变量与账号分组、五窗口额度页面结构。
- * [OUTPUT]: Magpie 背景、刷新反馈、账号列表与额度布局。
+ * [OUTPUT]: 深浅模式的不透明页面底色、平面按钮、刷新反馈、账号列表与额度布局。
  * [POS]: Antigravity Switch 页面唯一样式入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
 :root {
   color-scheme: light dark;
-  --bg: var(--magpie-bg, #f6f7f9);
-  --card: var(--magpie-card, #ffffff);
+  --bg: var(--magpie-bg, light-dark(#f4f4f6, #1a1a1e));
+  --card: var(--magpie-card, light-dark(#fff, #232327));
   --surface-radius: 12px;
-  --text: var(--magpie-fg, #18181b);
-  --muted: var(--magpie-muted, #71717a);
-  --border: var(--magpie-line, rgba(24, 24, 27, 0.09));
-  --primary: var(--magpie-accent, #2563eb);
-  --primary-soft: var(--magpie-accent-soft, rgba(37, 99, 235, 0.12));
-  --success: var(--magpie-green, #047857);
-  --success-soft: rgba(16, 185, 129, 0.14);
-  --warning: var(--magpie-amber, #92400e);
-  --danger: var(--magpie-red, #b91c1c);
-  --danger-soft: rgba(239, 68, 68, 0.12);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: var(--magpie-bg, #18181b);
-    --card: var(--magpie-card, #202124);
-    --text: var(--magpie-fg, #f4f4f5);
-    --muted: var(--magpie-muted, #9ca3af);
-    --border: var(--magpie-line, rgba(255, 255, 255, 0.08));
-    --primary: var(--magpie-accent, #3b82f6);
-    --primary-soft: var(--magpie-accent-soft, rgba(59, 130, 246, 0.16));
-    --success: var(--magpie-green, #34d399);
-    --success-soft: rgba(52, 211, 153, 0.15);
-    --warning: var(--magpie-amber, #fbbf24);
-    --danger: var(--magpie-red, #f87171);
-    --danger-soft: rgba(248, 113, 113, 0.15);
-  }
+  --text: var(--magpie-fg, light-dark(#1c1c21, #ededf1));
+  --secondary: var(--magpie-fg-2, light-dark(#4b4b53, #b9b9c1));
+  --muted: color-mix(in srgb, var(--secondary) 85%, var(--card));
+  --border: var(--magpie-line, light-dark(#e3e3e8, #333339));
+  --control-border: color-mix(in srgb, var(--text) 52%, var(--card));
+  --primary: var(--magpie-accent, light-dark(#4f46e5, #a5b4fc));
+  --primary-fg: var(--magpie-accent-fg, light-dark(#fff, #14142a));
+  --primary-soft: var(--magpie-accent-soft, light-dark(#eeedfd, #2b2c47));
+  --success: var(--magpie-green, light-dark(#189a58, #6fd99b));
+  --warning: var(--magpie-amber, light-dark(#a14b09, #f2b544));
+  --danger: var(--magpie-red, light-dark(#b91c1c, #f28b82));
+  --success-soft: color-mix(in srgb, var(--success) 12%, var(--card));
+  --danger-soft: color-mix(in srgb, var(--danger) 12%, var(--card));
+  --success-ink: color-mix(in srgb, var(--success) 60%, var(--text));
+  --danger-ink: color-mix(in srgb, var(--danger) 70%, var(--text));
 }
 
 * {
@@ -48,22 +36,9 @@ html {
   min-height: 100%;
   width: 100%;
   background: var(--bg);
-  color-scheme: light dark;
 }
-
-/* WebKit gives the iframe an opaque canvas if its color scheme differs from the host's. */
-html[data-theme] {
-  background: transparent;
-  color-scheme: normal !important;
-}
-
-html[data-theme="dark"] body {
-  color-scheme: dark;
-}
-
-html[data-theme="light"] body {
-  color-scheme: light;
-}
+html[data-theme="dark"] { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }
 
 body {
   min-height: 100%;
@@ -115,7 +90,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: transparent;
-  color: var(--magpie-fg-2, var(--text));
+  color: var(--secondary);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
@@ -150,9 +125,10 @@ body {
 }
 
 .toolbar .btn {
+  box-shadow: none;
   border-color: transparent;
   background: transparent;
-  color: var(--magpie-fg-2, var(--text));
+  color: var(--secondary);
 }
 
 .toolbar .btn:hover:not(:disabled) {
@@ -162,9 +138,8 @@ body {
 #btnRefresh {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 6px;
-  min-inline-size: 116px;
 }
 
 .refresh-icon {
@@ -218,7 +193,7 @@ body {
 .btn-primary {
   background: var(--primary);
   border-color: transparent;
-  color: var(--magpie-accent-fg, #fff);
+  color: var(--primary-fg);
   font-weight: 600;
 }
 
@@ -227,9 +202,11 @@ body {
   border-color: transparent;
 }
 
-.btn-ghost {
+.btn-ghost,
+.github-star-badge {
+  border-color: var(--control-border);
   background: transparent;
-  color: var(--muted);
+  color: var(--secondary);
 }
 
 .btn-ghost:hover:not(:disabled) {
@@ -250,14 +227,14 @@ body {
 
 .toast.is-ok {
   background: var(--success-soft);
-  color: var(--success);
-  border-color: rgba(16, 185, 129, 0.25);
+  color: var(--success-ink);
+  border-color: color-mix(in srgb, var(--success) 35%, var(--card));
 }
 
 .toast.is-error {
   background: var(--danger-soft);
-  color: var(--danger);
-  border-color: rgba(239, 68, 68, 0.25);
+  color: var(--danger-ink);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--card));
 }
 
 .hidden {
@@ -293,7 +270,7 @@ body {
   cursor: pointer;
   padding: 9px 14px;
   font-size: 12.5px;
-  color: var(--magpie-fg-2, var(--text));
+  color: var(--secondary);
 }
 
 .unavailable-accounts summary:hover {
@@ -411,7 +388,7 @@ body {
 
 .tag-pro {
   background: var(--success-soft);
-  color: var(--success);
+  color: var(--success-ink);
 }
 
 .tag-free,
@@ -422,7 +399,7 @@ body {
 
 .tag-bad {
   background: var(--danger-soft);
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .tag-active {
@@ -483,7 +460,7 @@ body {
 }
 
 .quota-cell.is-low .quota-value {
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 
 .quota-cell.is-unknown .quota-value {
@@ -549,12 +526,6 @@ summary:focus-visible {
 ::selection {
   background: var(--primary-soft);
   color: var(--text);
-}
-
-@media (prefers-color-scheme: dark) {
-  .btn-primary {
-    color: var(--magpie-accent-fg, #0b1220);
-  }
 }
 
 @media (max-width: 1060px) {

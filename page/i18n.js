@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Magpie 主题语言与页面、后台状态文案。
- * [OUTPUT]: 中英文文案、日期格式与常见后台反馈翻译。
+ * [OUTPUT]: 中英文文案、读数时间与常见后台反馈翻译。
  * [POS]: Magpie 沙箱中的经典脚本，必须先于 app.js 加载。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -33,6 +33,11 @@
     cliOnly: ["仅 CLI", "CLI only"],
     cliShared: ["新启动的 CLI 和桌面端共用此登录", "New CLI processes and the desktop app share this sign-in"],
     cliNext: ["供新启动的 CLI 使用", "Use this account for new CLI processes"],
+    previousReading: ["上次数据", "Previous reading"],
+    updated: ["更新于", "Updated"],
+    timeUnknown: ["更新时间未知", "Update time unknown"],
+    noPreviousReading: ["暂无历史数据", "No previous reading"],
+    refreshFailed: ["额度刷新失败", "Quota refresh failed"],
     quotaWait: ["待刷新", "Needs refresh"],
     unknown: ["未知", "Unknown"],
     quota: ["Magpie 配额", "Magpie quota"],

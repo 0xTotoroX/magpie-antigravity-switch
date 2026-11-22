@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Magpie logins/plugin-auth/配额 JSON、隔离 agyHome 令牌、macOS security 与 language_server 登录身份。
- * [OUTPUT]: Magpie 单一来源（兼容 legacy antigravity、plugin:antigravity 与 plugin:agy-cli）的套餐与配额窗口、会员分类、登录状态、校验备份、账号操作与无凭据的 page/state.js。
+ * [OUTPUT]: Magpie 单一来源（兼容 legacy antigravity、plugin:antigravity 与 plugin:agy-cli）的套餐、配额窗口及其读数时间、会员分类、登录状态、校验备份、账号操作与无凭据的 page/state.js。
  * [POS]: CLI 与守护进程共用核心；状态脚本供 page/app.js 渲染，运行身份与待生效凭据分别返回。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -751,7 +751,8 @@ function summarizeQuotaEntry(entry) {
   return {
     source: "magpie",
     plan: entry.quota.plan || null,
-    updatedAt: entry.at || entry.quota.readAt || null,
+    updatedAt: entry.quota.readAt || entry.quota.asOf || entry.at || null,
+    previousReading: Boolean(entry.quota.asOf),
     error: entry.error || null,
     pools
   };
@@ -803,7 +804,7 @@ function resolveQuotaForEmail(email, quotas, cliCache = null, providers = QUOTA_
           ...cliSummary,
           refreshError: cliEntry.refreshError || null
         },
-        atMs: Date.parse(cliSummary.updatedAt || "") || 0
+        atMs: new Date(cliSummary.updatedAt ?? 0).getTime() || 0
       });
     }
   }
@@ -811,7 +812,7 @@ function resolveQuotaForEmail(email, quotas, cliCache = null, providers = QUOTA_
     const entry = findQuotaEntry(quotas, provider, email);
     const summary = summarizeQuotaEntry(entry);
     if (!summary) continue;
-    const atMs = Date.parse(summary.updatedAt || "") || 0;
+    const atMs = new Date(summary.updatedAt ?? 0).getTime() || 0;
     candidates.push({ provider, fromCliCache: false, entry, summary, atMs });
   }
   if (candidates.length === 0) return null;
@@ -2025,7 +2026,7 @@ export async function refreshCliAccounts({ force = false, now = () => Date.now()
     const home = getLoginHomeKey(login);
     const prev = findCliCacheEntry(cache, email);
     if (!force && prev?.providerHome === home) {
-      const fetchedMs = Date.parse(prev.fetchedAt || "");
+      const fetchedMs = Date.parse(prev.fetchedAt || prev.attemptedAt || "");
       if ((prev.retryAfter && nowMs < prev.retryAfter) ||
           (!prev.error && Number.isFinite(fetchedMs) && nowMs - fetchedMs < CLI_QUOTA_TTL_MS)) {
         skipped++;
@@ -2044,17 +2045,20 @@ export async function refreshCliAccounts({ force = false, now = () => Date.now()
       try {
         const { quota, cached } = await refreshMagpieQuota(user);
         if (quota.error) throw new Error(quota.error);
-        const readAt = quota.readAt || quota.asOf || attemptedAt;
+        const reused = Boolean(cached || quota.readDeferred || quota.asOf);
+        // A cached reply without a reading time cannot be dated by this attempt.
+        const readAt = quota.readAt || quota.asOf || (reused ? null : attemptedAt);
         const reading = {
           plan: quota.plan || null,
           readAt,
+          asOf: quota.asOf || null,
           windows: Array.isArray(quota.windows) ? quota.windows : []
         };
         if (summarizeQuotaEntry({ quota: reading }).pools.length === 0) {
           throw new Error("Magpie 未返回可显示的额度读数");
         }
         updates.set(email, { providerHome: home, fetchedAt: readAt, attemptedAt, quota: reading });
-        if (cached || quota.readDeferred || quota.asOf) skipped++;
+        if (reused) skipped++;
         else refreshed++;
       } catch (err) {
         const message = sanitizeErrorMessage(err);

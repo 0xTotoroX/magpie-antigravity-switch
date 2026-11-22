@@ -644,6 +644,13 @@ test("Magpie refresh keeps exact provider quotas, honors cache age and preserves
   assert.equal(limited.refreshed, 0);
   assert.match(limited.message, /沿用 1 个账号的近期额度/);
 
+  assert.equal(limited.state.accounts[0].quota.updatedAt, null);
+  const readAt = new Date(nowMs - 60_000).toISOString();
+  f.options.refreshQuota = () => ({ cards: [{ ...card, readAt, asOf: new Date(nowMs).toISOString() }] });
+  const fallback = await refresh(true);
+  assert.equal(fallback.state.accounts[0].quota.previousReading, true);
+  assert.equal(fallback.state.accounts[0].quota.updatedAt, readAt);
+
   f.options.refreshQuota = () => ({ cards: [{ ...card, windows: [
     { pool: "Gemini", name: "Gemini · 7 days", used: 0, text: true },
     { pool: "Gemini", name: "Claude & GPT · 7 days", used: 0 }
@@ -660,6 +667,7 @@ test("Magpie refresh keeps exact provider quotas, honors cache age and preserves
   assert.equal(failed.failed, 1);
   assert.equal(failed.state.accounts[0].quota.pools.length, 3);
   assert.match(failed.state.accounts[0].quota.refreshError, /timed out/);
+  assert.equal(failed.state.accounts[0].quota.updatedAt, readAt);
 });
 
 test("corrupt cliQuotaCache file is preserved without overwriting", async () => {

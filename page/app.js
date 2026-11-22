@@ -1,6 +1,6 @@
 /**
  * [INPUT]: state.js 账号快照、i18n.js 文案与 Magpie 页面桥接。
- * [OUTPUT]: 按账号类型分组的 Magpie 模型额度、原始档位、行内登录状态与额度刷新。
+ * [OUTPUT]: 按账号类型分组的 Magpie 模型额度、原始档位、行内登录状态与历史读数时间。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -141,6 +141,21 @@
       </div>`).join("")}</div><span class="actions-heading">${t("actions")}</span></div>`;
   }
 
+  function quotaNotice(quota) {
+    if (!quota) return "";
+    const error = quota.error || quota.refreshError;
+    if (!error && !quota.previousReading) return "";
+    const reason = error === "Magpie 未能刷新这个账号的额度" ? t("refreshFailed") : i18n.backend(error);
+    const hasReading = !quota.error && quota.pools?.some((pool) => Number.isFinite(pool.remaining));
+    if (!hasReading) return [reason, t("noPreviousReading")].filter(Boolean).join(" · ");
+
+    const date = new Date(quota.updatedAt ?? NaN);
+    const updated = Number.isFinite(date.getTime())
+      ? t("updated") + " " + date.toLocaleString(i18n.locale(), { dateStyle: "medium", timeStyle: "short" })
+      : t("timeUnknown");
+    return [reason, t("previousReading"), updated].filter(Boolean).join(" · ");
+  }
+
   function renderAccountRow(account, quotaGroups = QUOTA_GROUPS) {
     const isCurrentAll = account.activeDesktop && account.activeCli && account.savedDesktop;
     const desktopSavedOffline = account.savedDesktop && currentState?.current?.desktopStatus === "stopped";
@@ -157,8 +172,8 @@
       ? account.plan
       : i18n.stateLabel(account.tierLabel) || t(isPaid ? "member" : "planUnknown");
     const quotaIssue = account.isEligible
-      ? account.quota?.error || account.quota?.refreshError
-      : account.ineligibleReason;
+      ? quotaNotice(account.quota)
+      : i18n.backend(account.ineligibleReason);
 
     const canSwitch = account.hasCredentials && account.isEligible;
     const disabled = pendingCommandType !== null || Boolean(currentState?.error);
@@ -194,7 +209,7 @@
             ${statusTags}
           </div>
           <div class="account-tags"><span class="tag ${tierClass}">${escapeHtml(tierLabel)}</span></div>
-          ${quotaIssue ? `<span class="account-issue">${escapeHtml(i18n.backend(quotaIssue))}</span>` : ""}
+          ${quotaIssue ? `<span class="account-issue">${escapeHtml(quotaIssue)}</span>` : ""}
         </div>
         ${renderQuotaGrid(account, quotaGroups)}
         <div class="account-actions">

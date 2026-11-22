@@ -287,13 +287,35 @@ test("the quota timeout follows Magpie's language and keeps available readings v
     pools: [{ pool: "Gemini", window: "7 days", remaining: 72 }]
   } }];
   const p = page(state);
-  assert.match(p.el("accountList").innerHTML, /agy 额度查询超时/);
+  assert.match(p.el("accountList").innerHTML, /agy 额度查询超时 · 上次数据 · 更新时间未知/);
   assert.match(p.el("accountList").innerHTML, /aria-valuenow="72"/);
 
   state.accounts[0].quota.refreshError = "context deadline exceeded";
   p.setLanguage("en");
   assert.match(p.el("accountList").innerHTML, /The agy quota query timed out/);
   assert.match(p.el("accountList").innerHTML, /aria-valuenow="72"/);
+});
+
+test("failed quota refresh dates the retained reading, clears on recovery and handles an empty history", () => {
+  const state = baseState();
+  const quota = { refreshError: "Magpie 未能刷新这个账号的额度", updatedAt: "2025-10-14T12:08:00Z",
+    pools: [{ pool: "Gemini", window: "7 days", remaining: 0 }] };
+  state.accounts = [{ email: "saved@example.test", isEligible: true, quota }];
+  const p = page(state);
+  const html = () => p.el("accountList").innerHTML;
+  const options = { dateStyle: "medium", timeStyle: "short" };
+  assert(html().includes("额度刷新失败 · 上次数据 · 更新于 " + new Date(quota.updatedAt).toLocaleString("zh-CN", options)));
+  p.setLanguage("en");
+  assert(html().includes("Quota refresh failed · Previous reading · Updated " + new Date(quota.updatedAt).toLocaleString("en", options)));
+  assert.match(html(), /aria-valuenow="0"/);
+  quota.refreshError = null;
+  p.render(state);
+  assert.doesNotMatch(html(), /Previous reading|Updated/);
+  quota.error = "Magpie 未能刷新这个账号的额度";
+  quota.pools = [];
+  p.render(state);
+  assert.match(html(), /Quota refresh failed · No previous reading/);
+  assert.doesNotMatch(html(), /Updated |aria-valuenow=/);
 });
 
 test("a delayed older snapshot cannot replace the latest quota result", () => {
