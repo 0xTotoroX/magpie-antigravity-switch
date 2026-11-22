@@ -38,6 +38,8 @@ export async function fixture(options = {}) {
     existsSync(p) { return files.has(String(p)) || dirs.has(String(p)); },
     mkdirSync(p) { dirs.add(String(p)); },
     chmodSync() {},
+    openSync() { return 3; },
+    closeSync() {},
     readFileSync(p, enc) {
       if (readErrors.has(String(p))) throw Object.assign(new Error("fixture read denied"), { code: readErrors.get(String(p)) });
       if (!files.has(String(p))) throw Object.assign(new Error("fixture missing"), { code: "ENOENT" });
@@ -65,6 +67,7 @@ export async function fixture(options = {}) {
     },
     execFileSync(cmd, args = []) {
       calls.push({ cmd, args });
+      if (cmd === "/usr/bin/lockf") { options.onLoginLock?.(); return ""; }
       if (cmd === "security") {
         if (args[0] === "find-generic-password") {
           if (options.denyKeychainRead) throw Object.assign(new Error("fixture read denied"), { status: 36 });

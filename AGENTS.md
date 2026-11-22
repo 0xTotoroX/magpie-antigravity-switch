@@ -6,10 +6,10 @@ macOS 上的 Magpie 页面插件与 CLI，使用 JavaScript ES modules、Node.js
 
 ## 入口与目录
 
-- `host.mjs`：Magpie v1 宿主入口，导入不启动服务；`server()` 才初始化状态与监听。
+- `host.mjs`：Magpie v1 宿主入口，导入不启动服务；`server()` 才初始化后台与 Magpie 页面服务。
 - `index.mjs`：Magpie 默认插件函数和 `magpie-agy-switch` CLI；导入模块不会执行 CLI。
 - [src](src/AGENTS.md)：凭据、备份、账号状态、切换与后台监听。
-- [page](page/AGENTS.md)：Magpie 沙箱中的经典脚本页面。
+- [page](page/AGENTS.md)：Magpie 沙箱入口、回环服务页面与经典脚本。
 - [test](test/AGENTS.md)：使用假凭据、内存文件系统与子进程替身的回归测试。
 - `package.json`：插件页面、CLI 入口、发布文件范围与 `npm test`。
 - [publish-npm.yml](.github/workflows/publish-npm.yml) 仅供手动验证 npm 授权或发布。用户审核发布说明及产物后，从正式 Release tag 触发发布，上传前核对 GitHub Release 附件的 SHA-256。

@@ -45,6 +45,7 @@
     remaining: ["剩余", "remaining"],
     resetTime: ["重置时间", "Reset time"],
     verifyAccount: ["账号需验证或地区受限", "Account verification required or region unsupported"],
+    reopen: ["请从 Magpie 重新打开 Antigravity Switch", "Reopen Antigravity Switch from Magpie"],
     noBridge: ["未检测到 Magpie 页面桥接，请通过 Magpie 侧边栏打开", "Open this plugin from the Magpie sidebar to connect it"],
     refreshTimeout: ["额度刷新暂未返回结果", "The quota refresh has not returned a result yet"],
     commandTimeout: ["操作暂未返回结果", "The operation has not returned a result yet"],

@@ -1,11 +1,10 @@
 /**
- * [INPUT]: .runtime/state.js 账号快照、i18n.js 文案与 Magpie 页面桥接。
+ * [INPUT]: 本机页面服务的账号快照、i18n.js 文案与 Magpie 页面桥接。
  * [OUTPUT]: 按账号类型分组的 Magpie 模型额度、套餐及上次记录标记、行内登录状态与历史读数时间。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
 (() => {
-  const PLUGIN_NAME = "magpie-antigravity-switch";
   const QUOTA_GROUPS = [
     { pool: "Claude & GPT", label: "GPT / Claude", windows: ["5 hours", "7 days"] },
     { pool: "Gemini", label: "Gemini", windows: ["5 hours", "7 days"] },
@@ -21,44 +20,6 @@
   let lastHandledSwitchId = currentState?.lastSwitch?.cmdId || currentState?.lastSwitch?.id || null;
   let pendingCommandType = null;
   let lastToast = "";
-
-  async function ensureMagpieBridge() {
-    if (globalThis.magpie?.options?.set || typeof globalThis.magpie?.saveOptions === "function") {
-      if (globalThis.magpie.ready) {
-        try {
-          await globalThis.magpie.ready;
-        } catch {
-          // ignore
-        }
-      }
-      return globalThis.magpie;
-    }
-    const candidates = ["_magpie/bridge.js", "./_magpie/bridge.js", "/_magpie/bridge.js"];
-    for (const src of candidates) {
-      try {
-        await new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = src;
-          s.onload = resolve;
-          s.onerror = reject;
-          document.head.appendChild(s);
-        });
-        if (globalThis.magpie?.options?.set || typeof globalThis.magpie?.saveOptions === "function") {
-          if (globalThis.magpie.ready) {
-            try {
-              await globalThis.magpie.ready;
-            } catch {
-              // ignore
-            }
-          }
-          return globalThis.magpie;
-        }
-      } catch {
-        // try next
-      }
-    }
-    return globalThis.magpie || null;
-  }
 
   function escapeHtml(str) {
     return String(str ?? "")
@@ -294,24 +255,16 @@
   function receiveState(state) {
     if (!state || (state.generatedAt && state === currentState)) return;
     if (state.generatedAt && currentState?.generatedAt && state.generatedAt < currentState.generatedAt) return;
+    if (!currentState && !pendingCommandType) lastHandledSwitchId = state.lastSwitch?.cmdId || state.lastSwitch?.id || null;
     render(state);
   }
 
-  async function pollStateScript() {
-    return new Promise((resolve) => {
-      const script = document.createElement("script");
-      script.src = `.runtime/state.js?t=${Date.now()}`;
-      script.onload = () => {
-        script.remove();
-        receiveState(globalThis.__AGY_SWITCH_STATE__);
-        resolve();
-      };
-      script.onerror = () => {
-        script.remove();
-        resolve();
-      };
-      document.body.appendChild(script);
-    });
+  async function updateState() {
+    try {
+      receiveState(await globalThis.agyPage.state());
+    } catch (err) {
+      if (!currentState || err.message === t("reopen")) showToast(t("commandFailed") + i18n.separator() + err.message, false);
+    }
   }
 
   async function sendPluginCommand(cmdPayload) {
@@ -325,30 +278,15 @@
     render(currentState);
 
     try {
-      const bridge = await ensureMagpieBridge();
-      if (typeof bridge?.options?.set === "function") {
-        await bridge.options.set({ cmd: fullCmd });
-      } else if (typeof bridge?.saveOptions === "function") {
-        await bridge.saveOptions(PLUGIN_NAME, { cmd: fullCmd });
-      } else {
-        const noBridgeMsg = cmdPayload.type === "open-github"
-           ? "https://github.com/0xTotoroX/magpie-antigravity-switch"
-          : t("noBridge");
-        showToast(noBridgeMsg, cmdPayload.type === "open-github");
-        return;
-      }
-
-      const waitMs = isRefreshing ? 180_000 : 10_000;
-      const pollMs = isRefreshing ? 1_000 : 250;
-      const deadline = Date.now() + waitMs;
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, pollMs));
-        await pollStateScript();
-        if (lastHandledSwitchId === cmdId) return;
-      }
-      showToast(t(isRefreshing ? "refreshTimeout" : "commandTimeout"), false);
+      const state = await globalThis.agyPage.command(fullCmd);
+      receiveState(state);
+      const result = state?.lastSwitch;
+      if (result?.cmdId !== cmdId) throw Error(t("commandTimeout"));
+      if (lastHandledSwitchId !== cmdId) showToast(result.message, result.ok !== false);
     } catch (err) {
-      showToast(`${t("commandFailed")}${i18n.separator()}${err.message || err}`, false);
+      const message = err.name === "TimeoutError" ? t(isRefreshing ? "refreshTimeout" : "commandTimeout")
+        : `${t("commandFailed")}${i18n.separator()}${err.message || err}`;
+      showToast(message, false);
     } finally {
       pendingCommandType = null;
       render(currentState);
@@ -418,14 +356,8 @@
   if (currentState) {
     render(currentState);
   } else {
-    pollStateScript().then(() => {
-      if (!currentState) {
-        sendPluginCommand({ type: "refresh" });
-      }
-    });
+    updateState();
   }
 
-  setInterval(() => {
-    pollStateScript();
-  }, 2500);
+  setInterval(updateState, 2500);
 })();

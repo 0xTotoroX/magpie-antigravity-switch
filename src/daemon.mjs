@@ -1,9 +1,10 @@
 /**
  * [INPUT]: core.mjs、插件指令文件与本地文件变更。
- * [OUTPUT]: 两种分发包名的指令解析、后台监听器与页面状态同步。
+ * [OUTPUT]: 本机页面服务与旧版选项共用串行队列，后台监听及页面状态同步。
  * [POS]: Magpie 插件的独立后台进程；使用系统文件锁保持单实例，空闲时热重载。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
+import { startPageService } from "./page-service.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
@@ -32,7 +33,8 @@ function getCodeSignature() {
   try {
     const s1 = fs.statSync(__filename);
     const s2 = fs.statSync(CORE_PATH);
-    return `${Math.trunc(s1.mtimeMs)}-${s1.size}:${Math.trunc(s2.mtimeMs)}-${s2.size}`;
+    const transport = fs.statSync(path.join(__dirname, "page-service.mjs"));
+    return [s1, s2, transport].map(s => Math.trunc(s.mtimeMs) + "-" + s.size).join(":");
   } catch {
     return "unknown";
   }
@@ -155,6 +157,7 @@ export function readPendingCommand(raw) {
 }
 
 function startInProcessWatcher(reloadIfChanged) {
+  let pageState = null;
   let lastCmdId = null;
   let debounceTimer = null;
   let queue = Promise.resolve();
@@ -163,11 +166,13 @@ function startInProcessWatcher(reloadIfChanged) {
 
   const enqueue = (task) => {
     pendingJobs++;
-    queue = queue.then(task).catch(() => {
+    const result = queue.then(task);
+    queue = result.catch(() => {
       // Command and cache errors must not stop the watcher.
     }).finally(() => {
       pendingJobs--;
     });
+    return result;
   };
 
   const triggerBackgroundRefresh = () => {
@@ -189,7 +194,7 @@ function startInProcessWatcher(reloadIfChanged) {
       // Retried after the next file event or periodic sync.
     }
     try {
-      syncStateFile();
+      pageState = syncStateFile();
     } catch {
       // A transient state-file write failure must not stop future recovery.
     }
@@ -201,6 +206,20 @@ function startInProcessWatcher(reloadIfChanged) {
   };
 
   syncFromDisk();
+  const pageDir = path.join(PLUGIN_DIR, "page");
+  const { port } = JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, "package.json"), "utf8")).magpie.page.service;
+  const stopService = startPageService({
+    pageDir, port, getState: () => pageState,
+    submit(cmd) {
+      const receivedAt = Date.now();
+      return enqueue(async () => {
+        await executeCommandAsync(cmd, { receivedAt });
+        pageState = syncStateFile();
+        if (pageState.lastSwitch?.cmdId !== cmd.id) throw Error("Missing command result");
+        return pageState;
+      });
+    }
+  });
   const watchedDirs = [
     PATHS.magpieDir,
     path.dirname(PATHS.cliToken),
@@ -233,6 +252,7 @@ function startInProcessWatcher(reloadIfChanged) {
   }, 4000);
 
   return () => {
+    stopService();
     clearTimeout(debounceTimer);
     clearTimeout(initialRefreshTimer);
     clearInterval(interval);

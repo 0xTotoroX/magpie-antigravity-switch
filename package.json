@@ -12,6 +12,9 @@
     "host.mjs",
     "index.mjs",
     "src",
+    "page/view.html",
+    "page/launch.js",
+    "page/client.js",
     "page/index.html",
     "page/app.js",
     "page/i18n.js",
@@ -50,6 +53,7 @@
         "zh-TW": "Antigravity Switch"
       },
       "file": "page/index.html",
+      "service": { "port": 37869 },
       "icon": "page/icon.svg",
       "keepAlive": false
     },

@@ -861,3 +861,15 @@ test("an old DevTools file and a lookalike process cannot trigger a desktop rest
   assert.match(result.reason, /当前未运行/);
   assert(!f.calls.some(c => ["kill", "killall", "open"].includes(c.cmd)));
 });
+
+test("preferring an account merges a login added while the switch was preparing", async () => {
+  const old = "first@example.test", next = "second@example.test", added = login("added@example.test");
+  const f = await fixture({ keychain: auth(old) });
+  const list = f.core.PATHS.loginsJson;
+  f.write(list, [{ ...login(old), first: true }, login(next)]);
+  f.options.onLoginLock = () => f.write(list, [...f.read(list), added]);
+  f.core.switchAccount({ email: next });
+  const saved = f.read(list);
+  assert.deepEqual(saved.find(x => x.user === added.user), added);
+  assert.deepEqual(saved.filter(x => x.first).map(x => x.user), [next]);
+});

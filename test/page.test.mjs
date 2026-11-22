@@ -8,7 +8,6 @@ import { project } from "./fixture.mjs";
 function page(state, language = "zh-CN", send) {
   const elements = new Map();
   let click;
-  const timers = [];
   class Element {
     closest(selector) { return selector === "#btnRefresh" ? this : null; }
   }
@@ -32,21 +31,17 @@ function page(state, language = "zh-CN", send) {
   };
   let localeChanged;
   const magpie = { theme: { lang: language }, onTheme: (callback) => { localeChanged = callback; } };
-  if (send) magpie.options = { set: send };
+  const agyPage = { state: async () => state, command: send };
   const context = vm.createContext({
-    document, magpie, Element,
-    setInterval() {}, setTimeout: (fn) => timers.push(fn),
+    document, magpie, agyPage, Element,
+    setInterval() {},
     __AGY_SWITCH_STATE__: state
   });
   vm.runInContext(fs.readFileSync(path.join(project, "page/i18n.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(project, "page/app.js"), "utf8"), context);
   return { el: id => document.getElementById(id), render: state => context.__AGY_SWITCH_ON_STATE__(state),
     setLanguage: (lang) => localeChanged({ lang }),
-    clickRefresh: () => click({ target: new Element() }),
-    poll: (state) => {
-      context.__AGY_SWITCH_STATE__ = state;
-      timers.shift()();
-    }
+    clickRefresh: () => click({ target: new Element() })
   };
 }
 const baseState = () => ({ current: {}, counts: { pro: 0, free: 0, unknown: 0, ineligible: 0 }, accounts: [], preferences: { onlyPro: false } });
@@ -270,7 +265,11 @@ test("English shows recoverable configuration errors and disabled provider statu
 test("refresh stays busy across unrelated updates until its own result arrives", async () => {
   const state = baseState();
   const commands = [];
-  const p = page(state, "en", ({ cmd }) => commands.push(cmd));
+  let finish;
+  const p = page(state, "en", (cmd) => {
+    commands.push(cmd);
+    return new Promise(resolve => { finish = resolve; });
+  });
   const btn = p.el("btnRefresh");
 
   p.clickRefresh();
@@ -281,12 +280,12 @@ test("refresh stays busy across unrelated updates until its own result arrives",
 
   await new Promise(setImmediate);
   assert.equal(commands.length, 1);
-  p.poll({ ...state, lastSwitch: { id: "other", message: "Another result" } });
+  p.render({ ...state, lastSwitch: { id: "other", message: "Another result" } });
   await new Promise(setImmediate);
   assert.equal(btn.getAttribute("aria-busy"), "true");
   assert.equal(btn.disabled, true);
 
-  p.poll({ ...state, lastSwitch: { cmdId: commands[0].id, message: "额度查询失败", ok: false } });
+  finish({ ...state, lastSwitch: { cmdId: commands[0].id, message: "额度查询失败", ok: false } });
   await new Promise(setImmediate);
   assert.equal(btn.getAttribute("aria-busy"), "false");
   assert.equal(btn.disabled, false);

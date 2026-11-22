@@ -43,6 +43,8 @@ test("the macOS watcher ignores a reused PID and hands off its lock when reloadi
   function install(name) {
     const dir = path.join(temp, name);
     fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ magpie: { page: { service: { port: 0 } } } }));
+    fs.copyFileSync(new URL("../src/page-service.mjs", import.meta.url), path.join(dir, "page-service.mjs"));
     const file = path.join(dir, "daemon.mjs");
     fs.copyFileSync(daemonSource, file);
     fs.writeFileSync(path.join(dir, "core.mjs"), `
