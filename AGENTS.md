@@ -16,7 +16,7 @@ macOS 上的 Magpie 页面插件与 CLI，使用 JavaScript ES modules、Node.js
 
 ## 数据与验证边界
 
-- 真实凭据、备份与 `page/state.js` 不提交到 Git。写回账号配置前必须严格解析；只允许缺失文件使用默认值。
+- 真实凭据、备份、`page/.runtime/` 与旧版 `page/state.js` 不提交到 Git。写回账号配置前必须严格解析；只允许缺失文件使用默认值。
 - 钥匙串更新不删除原条目，不使用 `-A`。已有条目保留访问权限，只在新建条目时设置有限的可信应用；不要每次切号重复提交 `-T`。需要 macOS 授权时遵循系统提示，不通过降低访问保护绕过。
 - `current.desktopRuntimeEmail` 是已查询到的运行身份；`desktopSavedEmail` 是保存的凭据身份。`desktopPending` 不等于切换已完成，查询失败不猜测运行身份。
 - 套餐与配额通过 Magpie 的 `quota refresh agy-cli` 与本地配额缓存读取；本地 desktop `language_server` 只确认当前运行账号，不使用旧保险库的 `plan` / `liveQuota` 分类或补额度。旧资料保留。同池推荐分数取各有效窗口的最小剩余量，缺失与过期读数不补满。

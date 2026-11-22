@@ -1,5 +1,5 @@
 /**
- * [INPUT]: state.js 账号快照、i18n.js 文案与 Magpie 页面桥接。
+ * [INPUT]: .runtime/state.js 账号快照、i18n.js 文案与 Magpie 页面桥接。
  * [OUTPUT]: 按账号类型分组的 Magpie 模型额度、套餐及上次记录标记、行内登录状态与历史读数时间。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
@@ -300,7 +300,7 @@
   async function pollStateScript() {
     return new Promise((resolve) => {
       const script = document.createElement("script");
-      script.src = `state.js?t=${Date.now()}`;
+      script.src = `.runtime/state.js?t=${Date.now()}`;
       script.onload = () => {
         script.remove();
         receiveState(globalThis.__AGY_SWITCH_STATE__);

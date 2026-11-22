@@ -30,7 +30,7 @@
   ],
   "scripts": {
     "test": "node --experimental-vm-modules --test test/*.test.mjs",
-    "clean": "node -e \"import('node:fs').then(fs => fs.writeFileSync('page/state.js', '// Auto-generated at runtime\\nglobalThis.__AGY_SWITCH_STATE__ = null;\\n'))\""
+    "clean": "node -e \"const fs = require('node:fs'); for (const p of ['page/.runtime/state.js', 'page/state.js']) fs.rmSync(p, {force:true})\""
   },
   "keywords": [
     "magpie",
