@@ -87,10 +87,10 @@ body {
   gap: 5px;
   min-height: 24px;
   padding: 0 8px;
-  border: 1px solid var(--border);
+  border: 1px solid light-dark(var(--control-border), transparent);
   border-radius: 6px;
   background: transparent;
-  color: var(--secondary);
+  color: light-dark(var(--secondary), var(--magpie-muted, #8b8b94));
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -104,7 +104,7 @@ body {
 }
 
 .github-star-badge:hover:not(:disabled) {
-  color: var(--text);
+  color: light-dark(var(--text), var(--secondary));
   background: var(--card);
 }
 
@@ -197,8 +197,7 @@ body {
   border-color: transparent;
 }
 
-.btn-ghost,
-.github-star-badge {
+.btn-ghost {
   border-color: var(--control-border);
   background: transparent;
   color: var(--secondary);
