@@ -1,6 +1,6 @@
 {
   "name": "magpie-antigravity-switch",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Switch Antigravity desktop and CLI accounts in Magpie, view account quotas, and back up local sign-ins.",
   "type": "module",
   "main": "./host.mjs",

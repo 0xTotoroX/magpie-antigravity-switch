@@ -7,11 +7,12 @@
 
 在 Magpie 中管理本机已有的 Antigravity 账号，查看桌面端、`agy` CLI 和 Magpie 网关的登录状态与模型配额。
 
-## 0.2.1 更新
+## 0.2.2 更新
 
-- 修复 macOS 重启后，Magpie 额度刷新可能收不到结果的问题。
-- 账号切换中途失败时恢复已更新的配置，并拦截与所选账号不符的凭据。
-- `switch --help` 显示帮助，无效切换参数会报错。页面保留最新的刷新结果。
+- 添加账号等待授权码时，可以继续刷新额度或切换已有账号。
+- 额度刷新失败时保留上次有效读数，并标出更新时间。
+- agy-cli 未返回套餐名称时，按同一账号显示登录记录里的上次套餐。
+- 修正深色模式的白底、提示与按钮对比度，减轻刷新按钮阴影，简化「支持 ☆」入口。
 
 ## 功能
 
@@ -32,13 +33,13 @@
 从 npm 安装：
 
 ```sh
-magpie plugin add npm:magpie-antigravity-switch@0.2.1
+magpie plugin add npm:magpie-antigravity-switch@0.2.2
 ```
 
 也可以从 GitHub 安装：
 
 ```sh
-magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.1
+magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.2
 ```
 
 也可以在 Magpie 的「插件 → 发现 → 非官方插件 · GitHub」中筛选 **Antigravity Switch**。安装后从侧边栏打开同名页面。
@@ -48,7 +49,7 @@ magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.1
 独立 CLI 需要 Node.js 24+：
 
 ```sh
-npm install --global magpie-antigravity-switch@0.2.1
+npm install --global magpie-antigravity-switch@0.2.2
 magpie-agy-switch status
 ```
 

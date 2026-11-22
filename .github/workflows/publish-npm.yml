@@ -1,5 +1,5 @@
 # [INPUT]: GitHub Release tag, its approved tarball SHA-256, and manual publish choice.
-# [OUTPUT]: npm identity check or publication of the exact GitHub Release artifact.
+# [OUTPUT]: npm identity check or publication and registry verification of the exact GitHub Release artifact.
 # [POS]: The project’s only npm publisher, using GitHub Actions OIDC.
 # [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
 name: Publish npm package
@@ -107,3 +107,42 @@ jobs:
         env:
           ARCHIVE: ${{ steps.archive.outputs.path }}
         run: npm publish "$ARCHIVE" --registry=https://registry.npmjs.org/ --access public --ignore-scripts
+
+      - name: Verify the public npm download
+        if: inputs.publish
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_SHA256: ${{ inputs.sha256 }}
+        run: |
+          node --input-type=module <<'JS'
+          import { createHash } from "node:crypto";
+          import { setTimeout as delay } from "node:timers/promises";
+
+          const registry = "https://registry.npmjs.org";
+          const name = "magpie-antigravity-switch";
+          const version = process.env.RELEASE_TAG.slice(1);
+          const expected = process.env.RELEASE_SHA256.toLowerCase();
+          const filename = `${name}-${version}.tgz`;
+          const archive = `${registry}/${name}/-/${filename}`;
+          const fetchFresh = url => fetch(url, {
+            cache: "no-store", redirect: "error", signal: AbortSignal.timeout(8_000)
+          });
+
+          for (let attempt = 0; attempt < 12; attempt++) {
+            const [latest, download] = await Promise.allSettled([
+              fetchFresh(`${registry}/${name}/latest`).then(async response => response.ok && (await response.json()).version),
+              fetchFresh(archive).then(async response => response.ok &&
+                createHash("sha256").update(Buffer.from(await response.arrayBuffer())).digest("hex"))
+            ]);
+            if (download.status === "fulfilled" && download.value && download.value !== expected) {
+              throw new Error("The public npm tarball differs from the approved GitHub Release archive");
+            }
+            if (latest.status === "fulfilled" && latest.value === version &&
+                download.status === "fulfilled" && download.value === expected) {
+              console.log(`Verified npm latest is ${version} and ${filename} matches GitHub Release.`);
+              process.exit(0);
+            }
+            if (attempt < 11) await delay(5000);
+          }
+          throw new Error("The publish request succeeded, but the public registry has not yet confirmed the version and download. Check npm before retrying publish.");
+          JS
