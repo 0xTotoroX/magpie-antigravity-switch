@@ -37,6 +37,8 @@ The table shows the 5-hour and weekly quotas for Gemini on the left and GPT / Cl
 
 The CLI toggle shows or hides both the CLI badge and the **CLI only** buttons. They start hidden and the plugin remembers your choice. On macOS with local agy 1.5 or later, **CLI only** updates the Keychain sign-in used by new CLI processes and shared with the desktop app. Reconnect an existing CodexHost session to use the new CLI sign-in. The checkmark shows which account is saved in Keychain. Click it for details.
 
+Use **Paid only** next to the account count to show available paid accounts. The plugin remembers this choice.
+
 Sign-ins and backups stay on this Mac. Existing Keychain access permissions are preserved. macOS may ask you to authorize access.
 
 ## Command line

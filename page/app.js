@@ -16,9 +16,9 @@
   const t = i18n.text;
 
   let currentState = globalThis.__AGY_SWITCH_STATE__ || null;
-  let cliActionsHidden = currentState?.hideCliAction !== false;
-  let cliVisibilityLoaded = typeof currentState?.hideCliAction === "boolean";
-  let savingCliVisibility = false;
+  const pagePreferences = { hideCliAction: true, paidOnly: false };
+  const loadedPreferences = new Set();
+  let savingPreference = false;
   let pendingCommand;
   let trackedCommand;
   let feedback;
@@ -135,7 +135,12 @@
   }
 
   function renderQuotaHeader(quotaGroups, count) {
-    return `<div class="quota-header"><span class="account-count">${i18n.accountCount(count)}</span>
+    return `<div class="quota-header"><div class="account-summary">
+      <span class="account-count">${i18n.accountCount(count)}</span>
+      <button type="button" class="btn account-filter" id="btnPaidOnly" aria-controls="accountList"
+        aria-pressed="${pagePreferences.paidOnly}" aria-disabled="${savingPreference || pendingCommand?.type === "switch"}"
+        title="${t("paidOnlyTitle")}">${t("paidOnly")}</button>
+      </div>
       <div ${quotaGridAttributes(quotaGroups)} aria-hidden="true">${quotaGroups.map((group) => `<div class="quota-group">
         <strong>${group.label}</strong>
         <div class="quota-windows ${group.windows.length === 1 ? "is-single" : ""}">${group.windows.map((window) => `<span>${periodLabel(window)}</span>`).join("")}</div>
@@ -259,14 +264,14 @@
         <div class="account-main">
           <div class="account-title-line">
             <span class="account-email" title="${escapeHtml(account.email)}">${escapeHtml(account.email)}</span>${renderDesktopMark(account)}
-            ${account.activeCli && !cliActionsHidden ? `<span class="tag tag-cli" title="${t("cliNext")}">CLI</span>` : ""}
+            ${account.activeCli && !pagePreferences.hideCliAction ? `<span class="tag tag-cli" title="${t("cliNext")}">CLI</span>` : ""}
           </div>
           <div class="account-tags"><span class="tag ${tierClass}">${escapeHtml(tierLabel)}</span>${magpieTag}</div>
           ${quotaIssue ? `<span class="account-issue">${escapeHtml(quotaIssue)}</span>` : ""}
         </div>
         ${renderQuotaGrid(account, quotaGroups)}
         ${showActions ? `<div class="account-actions" id="actions-${escapeHtml(account.email)}" tabindex="-1">
-          ${renderSwitchButton(account, "all")}${cliActionsHidden ? "" : renderSwitchButton(account, "cli")}
+          ${renderSwitchButton(account, "all")}${pagePreferences.hideCliAction ? "" : renderSwitchButton(account, "cli")}
         </div>` : ""}
       </div>
     `;
@@ -286,10 +291,9 @@
     const groups = [
       { label: t("members"), matches: (a) => a.isEligible && (a.isPaid ?? a.isPro) },
       { label: t("freeAccounts"), matches: (a) => a.isEligible && !(a.isPaid ?? a.isPro) && a.isFree },
-      { label: t("planUnknown"), matches: (a) => a.isEligible && !(a.isPaid ?? a.isPro) && !a.isFree },
-      { label: t("unavailableAccounts"), matches: (a) => !a.isEligible }
+      { label: t("planUnknown"), matches: (a) => a.isEligible && !(a.isPaid ?? a.isPro) && !a.isFree }
     ];
-    return renderQuotaHeader(quotaGroups, accounts.length) + groups.map((group) => {
+    return groups.map((group) => {
       const rows = accounts.filter(group.matches);
       return rows.length ? `<section class="account-group" aria-label="${group.label}">
         <h2>${group.label}<span>${rows.length}</span></h2>
@@ -313,11 +317,11 @@
       : refreshing ? t("refreshing") : refreshResult && !refreshResult.warning ? feedbackLabel(refreshResult) : t("refresh");
     document.getElementById("btnGitHubStar").disabled = Boolean(pendingCommand);
     const cliToggle = document.getElementById("btnToggleCli");
-    cliToggle.disabled = !state || savingCliVisibility || pendingCommand?.target === "cli";
-    cliToggle.setAttribute("aria-pressed", String(!cliActionsHidden));
+    cliToggle.disabled = !state || savingPreference || pendingCommand?.target === "cli";
+    cliToggle.setAttribute("aria-pressed", String(!pagePreferences.hideCliAction));
     cliToggle.setAttribute("aria-label", t("showCliAction"));
-    cliToggle.title = t(cliActionsHidden ? "showCliAction" : "hideCliAction");
-    document.getElementById("switchPage").classList.toggle("hide-cli-actions", cliActionsHidden);
+    cliToggle.title = t(pagePreferences.hideCliAction ? "showCliAction" : "hideCliAction");
+    document.getElementById("switchPage").classList.toggle("hide-cli-actions", pagePreferences.hideCliAction);
 
     const error = state?.error || readError || (feedback?.cmd.type === "open-github" && feedback.warning && feedback.detail);
     const toast = document.getElementById("toastBanner");
@@ -325,14 +329,20 @@
     toast.classList.toggle("hidden", !error);
     if (state) currentState = state;
     const allAccounts = Array.isArray(state?.accounts) ? state.accounts : [];
-    const visibleAccounts = allAccounts.filter((account) => account.isEligible);
+    const visibleAccounts = allAccounts.filter((account) =>
+      account.isEligible && (!pagePreferences.paidOnly || (account.isPaid ?? account.isPro)));
     const quotaGroups = visibleQuotaGroups(visibleAccounts);
     toolbarIssue = sharedQuotaIssue(visibleAccounts, quotaGroups);
     if (refreshResult?.warning) {
-      const detail = i18n.backend(refreshResult.detail);
-      if (!toolbarIssue) toolbarIssue = { label: feedbackLabel(refreshResult), detail };
-      else if (refreshResult.label === "refreshFailed" && !toolbarIssue.detail.includes(detail)) {
-        toolbarIssue.detail = detail + "\n\n" + toolbarIssue.detail;
+      const scoped = pagePreferences.paidOnly && refreshResult.accountErrors.length > 0;
+      const affected = visibleAccounts.filter(account => refreshResult.accountErrors.includes(account.email));
+      if (!scoped || affected.length) {
+        const label = scoped ? t(affected.length === visibleAccounts.length ? "refreshFailed" : "partialFailure") : feedbackLabel(refreshResult);
+        const detail = scoped ? [label, ...affected.map(account => account.email)].join("\n") : i18n.backend(refreshResult.detail);
+        if (!toolbarIssue) toolbarIssue = { label, detail };
+        else if (!scoped && refreshResult.label === "refreshFailed" && !toolbarIssue.detail.includes(detail)) {
+          toolbarIssue.detail = detail + "\n\n" + toolbarIssue.detail;
+        }
       }
     }
     const issueButton = document.getElementById("quotaStatus");
@@ -351,12 +361,14 @@
     if (live.textContent !== announcement) live.textContent = announcement;
 
     if (!state) return;
-    const inactiveAccounts = allAccounts.filter((account) => !account.isEligible);
+    const inactiveAccounts = pagePreferences.paidOnly ? [] : allAccounts.filter((account) => !account.isEligible);
 
     const listEl = document.getElementById("accountList");
     if (listEl) {
-      const markup = visibleAccounts.length ? renderAccountGroups(visibleAccounts, quotaGroups)
-        : `<div class="account-empty-state">${t(allAccounts.length ? "noAvailable" : "noAccounts")}</div>`;
+      const empty = pagePreferences.paidOnly ? "noPaidAccounts" : allAccounts.length ? "noAvailable" : "noAccounts";
+      const markup = renderQuotaHeader(quotaGroups, visibleAccounts.length) + (visibleAccounts.length
+        ? renderAccountGroups(visibleAccounts, quotaGroups)
+        : `<div class="account-empty-state">${t(empty)}</div>`);
       if (markup !== visibleListMarkup) {
         const focused = document.activeElement;
         const focusedId = listEl.contains?.(focused) && focused?.id;
@@ -383,9 +395,11 @@
   function receiveState(state) {
     if (!state) return;
     if (state.generatedAt && currentState?.generatedAt && state.generatedAt < currentState.generatedAt) return;
-    if (!cliVisibilityLoaded && typeof state.hideCliAction === "boolean") {
-      cliActionsHidden = state.hideCliAction;
-      cliVisibilityLoaded = true;
+    for (const key of Object.keys(pagePreferences)) {
+      if (!loadedPreferences.has(key) && typeof state[key] === "boolean") {
+        pagePreferences[key] = state[key];
+        loadedPreferences.add(key);
+      }
     }
     readError = "";
     if (trackedCommand && state.lastSwitch?.cmdId === trackedCommand.id) {
@@ -447,18 +461,22 @@
     return `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   }
 
-  async function toggleCliVisibility() {
-    if (!currentState || savingCliVisibility || pendingCommand?.target === "cli") return;
-    savingCliVisibility = true;
+  async function togglePagePreference(key) {
+    const cli = key === "hideCliAction";
+    if (!currentState || savingPreference || (cli ? pendingCommand?.target === "cli" : pendingCommand?.type === "switch")) return;
+    const enabled = !pagePreferences[key];
+    const command = cli ? { type: "set-cli-visibility", hidden: enabled } : { type: "set-paid-only", enabled };
+    savingPreference = true;
     render(currentState);
     try {
-      const result = await globalThis.agyPage.command({ type: "set-cli-visibility", id: commandId(), hidden: !cliActionsHidden });
-      cliActionsHidden = result.hideCliAction;
-      cliVisibilityLoaded = true;
+      const result = await globalThis.agyPage.command({ ...command, id: commandId() });
+      if (result?.[key] !== enabled) throw Error(t("preferenceSaveFailed"));
+      pagePreferences[key] = enabled;
+      loadedPreferences.add(key);
     } catch {
-      openDetails(t("showCliAction"), t("cliVisibilityFailed"));
+      openDetails(t(cli ? "showCliAction" : "paidOnly"), t("preferenceSaveFailed"));
     } finally {
-      savingCliVisibility = false;
+      savingPreference = false;
       render(currentState);
     }
   }
@@ -506,7 +524,12 @@
     }
 
     if (target.closest("#btnToggleCli")) {
-      toggleCliVisibility();
+      togglePagePreference("hideCliAction");
+      return;
+    }
+
+    if (target.closest("#btnPaidOnly")) {
+      togglePagePreference("paidOnly");
       return;
     }
 
@@ -524,7 +547,7 @@
         reloadDesktop: true,
         syncMagpie: true
       });
-    } else if (action === "switch-cli" && email && !cliActionsHidden) {
+    } else if (action === "switch-cli" && email && !pagePreferences.hideCliAction) {
       sendPluginCommand({
         type: "switch",
         email,
@@ -549,7 +572,7 @@
   magpie?.ready?.then((theme) => applyLanguage(theme?.lang)).catch(() => {});
 
   if (currentState) {
-    render(currentState);
+    receiveState(currentState);
   } else {
     updateState();
   }

@@ -417,6 +417,28 @@ body {
   gap: 6px;
 }
 
+.account-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.account-filter {
+  min-height: 24px;
+  padding: 2px 7px;
+  color: var(--secondary);
+  background: transparent;
+  border-color: transparent;
+}
+
+.account-filter[aria-pressed="true"] {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.account-filter[aria-disabled="true"] { cursor: default; opacity: .6; }
+
 .quota-header strong {
   color: var(--secondary);
   font-size: 12.5px;
@@ -736,8 +758,9 @@ summary:focus-visible {
 }
 
 @media (max-width: 740px) {
-  .quota-header,
+  .quota-header > .account-quotas,
   .quota-group[data-optional]:not(:has([role="progressbar"], .is-stale)) { display: none; }
+  .quota-header { display: block; padding: 8px 16px; }
   .quota-cell { --period-track: auto; }
 
   .account-row {
@@ -772,6 +795,7 @@ summary:focus-visible {
 
 @media (max-width: 560px) {
   .shell { padding: 14px 12px 26px; }
+  .quota-header { padding-inline: 12px; }
   .account-row { padding: 12px; }
   .account-quotas,
   .account-quotas.has-carbon {

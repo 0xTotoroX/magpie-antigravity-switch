@@ -51,6 +51,7 @@ function page(state, language = "zh-CN", send) {
     clickRefresh: () => click({ target: new Element("#btnRefresh") }),
     clickQuotaStatus: () => click({ target: new Element("#quotaStatus") }),
     clickCliToggle: () => click({ target: new Element("#btnToggleCli") }),
+    clickPaidOnly: () => click({ target: new Element("#btnPaidOnly") }),
     clickSwitch: (email, action = "switch-all") => click({ target: new Element("[data-action]", { "data-action": action, "data-email": email }) }),
     expireToast: () => toastTimer?.()
   };
@@ -174,6 +175,48 @@ test("the provider list abbreviates known tiers and retains multipliers even wit
   for (const plan of ["Pro", "Ultra (5x)", "Ultra (20x)", "Enterprise", "Unrecognized plan"]) assert(rows.includes(`>${plan}</span>`));
   assert.match(rows, /free@example.test/);
   assert.match(rows, /unknown@example.test/);
+});
+
+test("paid filtering retains available members and hides other accounts and their refresh warnings", async () => {
+  const state = { ...baseState(), accounts: [
+    { email: "paid@example.test", isEligible: true, isPaid: true },
+    { email: "legacy-paid@example.test", isEligible: true, isPro: true },
+    { email: "free@example.test", isEligible: true, isFree: true, quota: { error: "context deadline exceeded" } },
+    { email: "unknown@example.test", isEligible: true },
+    { email: "unavailable@example.test", isEligible: false, isPaid: true }
+  ] };
+  const send = async cmd => {
+    if (cmd.type === "refresh") return { ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageWarning: true,
+      message: "1 个账号刷新失败", failedAccounts: ["free@example.test"] } };
+    assert.equal(cmd.type, "set-paid-only");
+    state.paidOnly = cmd.enabled;
+    return { paidOnly: cmd.enabled };
+  };
+  const p = page(state, "zh", send);
+  assert.match(p.el("accountList").innerHTML, />4 个账号</);
+  assert.equal(p.el("unavailableAccounts").hidden, false);
+  p.clickRefresh();
+  await new Promise(setImmediate);
+  assert.equal(p.el("quotaStatus").hidden, false);
+  p.clickPaidOnly();
+  await new Promise(setImmediate);
+  const refreshed = p.el("accountList").innerHTML;
+  assert.match(refreshed, />2 个账号</);
+  assert.match(refreshed, /btnPaidOnly" aria-controls="accountList"\s+aria-pressed="true"/);
+  assert.match(refreshed, /legacy-paid@example.test/);
+  assert.doesNotMatch(refreshed, /free@example|unknown@example/);
+  assert.equal(p.el("unavailableAccounts").hidden, true);
+  assert.equal(p.el("quotaStatus").hidden, true);
+  assert.equal(p.el("btnToggleCli").getAttribute("aria-pressed"), "true");
+
+  const noMembers = { ...state, accounts: state.accounts.slice(2) };
+  const reopened = page(noMembers, "zh", send);
+  assert.match(reopened.el("accountList").innerHTML, />0 个账号</);
+  assert.match(reopened.el("accountList").innerHTML, /暂无可用会员账号/);
+  assert.match(reopened.el("accountList").innerHTML, /btnPaidOnly" aria-controls="accountList"\s+aria-pressed="true"/);
+  reopened.clickPaidOnly();
+  await new Promise(setImmediate);
+  assert.match(reopened.el("accountList").innerHTML, /free@example.test/);
 });
 
 test("quota columns stay in model/window order regardless of input order", () => {

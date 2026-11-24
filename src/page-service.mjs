@@ -20,7 +20,10 @@ function pageCommand(input) {
   const cmd = { id: input.id, type: input.type, language: input.language === "en" ? "en" : "zh", ts: Date.now() };
   if (["refresh", "open-github", "reload-desktop"].includes(cmd.type)) return cmd;
   if (cmd.type === "set-cli-visibility") {
-    return typeof input.hidden === "boolean" ? { ...cmd, hidden: input.hidden } : null;
+    return typeof input.hidden === "boolean" ? { ...cmd, preference: "hideCliAction", value: input.hidden } : null;
+  }
+  if (cmd.type === "set-paid-only") {
+    return typeof input.enabled === "boolean" ? { ...cmd, preference: "paidOnly", value: input.enabled } : null;
   }
   if (cmd.type !== "switch" || !["all", "cli"].includes(input.target) ||
       typeof input.email !== "string" || !input.email || input.email.length > 320) return null;
@@ -32,13 +35,14 @@ export function startPageService({ pageDir, preferenceFile, port, getState, subm
   const ready = path.join(runtime, "connection.js");
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   const key = randomBytes(32).toString("hex");
-  let hideCliAction = true;
+  let preferences = { hideCliAction: true, paidOnly: false };
   try {
-    hideCliAction = JSON.parse(fs.readFileSync(preferenceFile, "utf8"))?.hideCliAction !== false;
+    const saved = JSON.parse(fs.readFileSync(preferenceFile, "utf8"));
+    preferences = { hideCliAction: saved?.hideCliAction !== false, paidOnly: saved?.paidOnly === true };
   } catch {
-    // 首次打开或偏好无法读取时默认收起。
+    // 首次打开或偏好无法读取时使用默认显示。
   }
-  const withPreference = state => state && { ...state, hideCliAction };
+  const withPreference = state => state && { ...state, ...preferences };
   const publish = (connection) => {
     const temp = ready + ".tmp-" + process.pid;
     fs.writeFileSync(temp, "globalThis.agyConnection = " + JSON.stringify(connection) + ";\n", { mode: 0o600 });
@@ -88,16 +92,17 @@ export function startPageService({ pageDir, preferenceFile, port, getState, subm
       let cmd;
       try { cmd = pageCommand(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch { /* malformed request */ }
       if (!cmd) return send(400);
-      if (cmd.type === "set-cli-visibility") {
+      if (cmd.preference) {
+        const next = { ...preferences, [cmd.preference]: cmd.value };
         const temp = preferenceFile + ".tmp-" + process.pid;
         try {
-          fs.writeFileSync(temp, JSON.stringify({ hideCliAction: cmd.hidden }) + "\n", { mode: 0o600 });
+          fs.writeFileSync(temp, JSON.stringify(next) + "\n", { mode: 0o600 });
           fs.renameSync(temp, preferenceFile);
         } finally {
           fs.rmSync(temp, { force: true });
         }
-        hideCliAction = cmd.hidden;
-        return send(200, JSON.stringify({ hideCliAction }));
+        preferences = next;
+        return send(200, JSON.stringify({ [cmd.preference]: cmd.value }));
       }
       const state = await submit(cmd);
       return send(200, JSON.stringify(withPreference(state)));

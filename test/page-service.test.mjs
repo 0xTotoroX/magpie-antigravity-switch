@@ -25,14 +25,18 @@ test("the local page reads its projection and submits refresh and switch without
   const base = "http://127.0.0.1:" + port;
   const headers = { authorization: "Bearer " + key, origin: "null", "content-type": "application/json" };
   assert.equal((await fetch(base + "/state")).status, 403);
-  assert.deepEqual(await (await fetch(base + "/state", { headers })).json(), { ...state, hideCliAction: true });
+  assert.deepEqual(await (await fetch(base + "/state", { headers })).json(), { ...state, hideCliAction: true, paidOnly: false });
   assert.equal((await fetch(base + "/.runtime/connection.js")).status, 404);
   const postVisibility = (hidden) => fetch(base + "/command", { method: "POST", headers,
     body: JSON.stringify({ type: "set-cli-visibility", id: "cmd-visibility", hidden }) });
   assert.equal((await postVisibility("false")).status, 400);
   assert.deepEqual(await (await postVisibility(false)).json(), { hideCliAction: false });
-  assert.deepEqual(JSON.parse(await fs.readFile(preferenceFile, "utf8")), { hideCliAction: false });
-  assert.deepEqual(await (await fetch(base + "/state", { headers })).json(), { ...state, hideCliAction: false });
+  const postPaidOnly = enabled => fetch(base + "/command", { method: "POST", headers,
+    body: JSON.stringify({ type: "set-paid-only", id: "cmd-paid-only", enabled }) });
+  assert.equal((await postPaidOnly("true")).status, 400);
+  assert.deepEqual(await (await postPaidOnly(true)).json(), { paidOnly: true });
+  assert.deepEqual(JSON.parse(await fs.readFile(preferenceFile, "utf8")), { hideCliAction: false, paidOnly: true });
+  assert.deepEqual(await (await fetch(base + "/state", { headers })).json(), { ...state, hideCliAction: false, paidOnly: true });
   for (const cmd of [{ type: "refresh", id: "cmd-refresh" }, { type: "switch", target: "all", email: state.accounts[0].email, id: "cmd-switch" }]) {
     const response = await fetch(base + "/command", { method: "POST", headers, body: JSON.stringify(cmd) });
     assert.equal((await response.json()).lastSwitch.cmdId, cmd.id);
