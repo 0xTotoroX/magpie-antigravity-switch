@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4
+
+- 额度有有效重置时间时，宽屏和窄屏都直接显示倒计时。
+- 移除 Agent 菜单里的 Switch 快捷入口。从 Magpie 左侧「插件」打开 Antigravity Switch。
+
 ## 0.2.3
 
 - 宽屏和窄屏都用 `6h32min`、`32min`、`6d4h` 表示额度重置倒计时。

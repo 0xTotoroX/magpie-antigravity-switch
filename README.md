@@ -11,13 +11,13 @@ Requires macOS, Magpie 0.1.2670 or later, and an existing Antigravity desktop or
 From npm:
 
 ```sh
-magpie plugin add npm:magpie-antigravity-switch@0.2.3
+magpie plugin add npm:magpie-antigravity-switch@0.2.4
 ```
 
 From GitHub:
 
 ```sh
-magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.3
+magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.4
 ```
 
 ## Accounts and quotas
@@ -39,7 +39,7 @@ Sign-ins and backups stay on this Mac. Existing Keychain access permissions are 
 The standalone CLI requires Node.js 24 or later.
 
 ```sh
-npm install --global magpie-antigravity-switch@0.2.3
+npm install --global magpie-antigravity-switch@0.2.4
 magpie-agy-switch status
 magpie-agy-switch switch user@example.com --target=cli
 ```

@@ -26,13 +26,13 @@
 从 npm 安装：
 
 ```sh
-magpie plugin add npm:magpie-antigravity-switch@0.2.3
+magpie plugin add npm:magpie-antigravity-switch@0.2.4
 ```
 
 也可以从 GitHub 安装：
 
 ```sh
-magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.3
+magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.4
 ```
 
 也可以在 Magpie 的「插件 → 发现 → 非官方插件 · GitHub」中筛选 **Antigravity Switch**。安装后从侧边栏打开同名页面。
@@ -42,7 +42,7 @@ magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.3
 独立 CLI 需要 Node.js 24+：
 
 ```sh
-npm install --global magpie-antigravity-switch@0.2.3
+npm install --global magpie-antigravity-switch@0.2.4
 magpie-agy-switch status
 ```
 
