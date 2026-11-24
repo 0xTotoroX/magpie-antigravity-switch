@@ -1061,7 +1061,7 @@ function buildState(inputs, agyCliOnly = false) {
   const lsRunning = Boolean(liveLs) || isLanguageServerRunning();
   const desktopRuntimeEmail = lsRunning ? liveLs?.email || null : null;
   const desktopEmail = lsRunning ? desktopRuntimeEmail : desktopSavedEmail;
-  const desktopPending = Boolean(lsRunning && desktopSavedEmail && desktopRuntimeEmail !== desktopSavedEmail);
+  const desktopPending = Boolean(desktopSavedEmail && desktopRuntimeEmail && desktopRuntimeEmail !== desktopSavedEmail);
   const desktopStatus = !lsRunning ? "stopped" : !desktopRuntimeEmail ? "unknown" : desktopPending ? "pending" : "running";
   const cliUsesSharedLogin = usesSharedAgyKeychain();
   const cliEmail = (cliUsesSharedLogin ? desktopKeychainEmail : cliPayload?.id_token_email) || null;
@@ -2010,15 +2010,18 @@ export function switchAccount({
   saveVault(vault);
 
   const state = syncStateFile({ fullResult: true });
-  const pending = writesKeychain &&
-    (Boolean(state.error) || (state.current.desktopRunning && state.current.desktopRuntimeEmail !== email));
+  const runtimeEmail = state.current.desktopRuntimeEmail;
+  const pending = Boolean(writesKeychain && runtimeEmail && runtimeEmail !== email);
+  const desktopUnverified = Boolean(writesKeychain && (state.error || state.current.desktopStatus === "unknown"));
+  const desktopNotice = pending ? "桌面端待生效" : desktopUnverified ? "桌面端账号待确认" : null;
   return {
     ok: true,
     pending,
+    desktopUnverified,
     email,
     target,
     reloadResult,
-    message: pending ? `${summaryMsg} · 桌面端待生效` : summaryMsg,
+    message: [summaryMsg, desktopNotice].filter(Boolean).join(" · "),
     state
   };
 }
@@ -2247,11 +2250,11 @@ export async function executeCommandAsync(cmd, { receivedAt } = {}) {
   }
 }
 
-function switchPageFeedback({ target, email, pending, reloadResult }) {
+function switchPageFeedback({ target, email, pending, desktopUnverified, reloadResult }) {
+  let desktopStatus = pending ? "桌面端待生效" : desktopUnverified ? "桌面端账号待确认" : null;
   if (target === "cli") {
-    return { pageMessage: `新启动的 CLI 将使用 ${email}${pending ? " · 桌面端待生效" : ""}` };
+    return { pageMessage: [`新启动的 CLI 将使用 ${email}`, desktopStatus].filter(Boolean).join(" · ") };
   }
-  let desktopStatus = pending ? "桌面端待生效" : null;
   let pageWarning = false;
   if (reloadResult?.reloaded) {
     desktopStatus = reloadResult.reason.includes("已自动重启") ? "已重启桌面端" : "桌面端重载中";

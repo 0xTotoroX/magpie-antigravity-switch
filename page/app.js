@@ -193,10 +193,15 @@
     return { label: summaries.join(" · "), detail: details.join("\n\n") };
   }
 
+  function showsDesktopCheck(account) {
+    return account.isEligible && account.savedDesktop && account.activeCli &&
+      currentState?.current?.desktopStatus === "unknown";
+  }
+
   function renderActions(account) {
     const email = escapeHtml(account.email);
     const locked = pendingCommand || currentState?.error ? "disabled" : "";
-    const pending = account.pendingDesktop;
+    const pending = account.pendingDesktop && currentState?.current?.desktopStatus !== "unknown";
     const canSwitch = account.hasCredentials && account.isEligible;
     const busy = pendingCommand?.email === account.email && pendingCommand;
     const result = feedback?.cmd.email === account.email && feedback;
@@ -215,12 +220,13 @@
     // When the command leaves Desktop pending, offer the next action immediately.
     if (result && !(pending && result.status === "桌面端待生效" && canSwitch)) {
       const waiting = result.cmd.type === "reload-desktop" ||
-        ["桌面端重载中", "桌面端待生效", "打开桌面端后生效"].includes(result.status);
+        ["桌面端重载中", "桌面端待生效", "打开桌面端后生效", "桌面端账号待确认"].includes(result.status);
       const icon = waiting ? clock : '<span class="action-icon icon-check" aria-hidden="true"></span>';
       const label = result.status === "打开桌面端后生效" ? t("onLaunch") : feedbackLabel();
       return `<span class="action-feedback ${waiting ? "is-waiting" : "is-done"}"${origin}
         title="${escapeHtml(i18n.backend(result.detail))}">${icon}<span>${escapeHtml(label)}</span></span>`;
     }
+    if (showsDesktopCheck(account)) return `<span class="action-feedback is-waiting" role="status">${t("desktopUnknown")}</span>`;
     if (!canSwitch) return pending ? `<span class="action-feedback is-waiting">${clock}${t("desktopPending")}</span>` : "";
 
     if (pending) {
@@ -312,7 +318,7 @@
     const desktopNotice = document.getElementById("desktopNotice");
     const allAccounts = Array.isArray(state?.accounts) ? state.accounts : [];
     const visibleAccounts = allAccounts.filter((account) => account.isEligible);
-    desktopNotice?.classList.toggle("hidden", Boolean(state?.error) || cur.desktopStatus !== "unknown" || visibleAccounts.some((a) => a.pendingDesktop));
+    desktopNotice?.classList.toggle("hidden", Boolean(state?.error) || cur.desktopStatus !== "unknown" || visibleAccounts.some(showsDesktopCheck));
     const quotaGroups = visibleQuotaGroups(visibleAccounts);
     toolbarIssue = sharedQuotaIssue(visibleAccounts, quotaGroups);
     if (refreshResult?.warning) {

@@ -194,8 +194,22 @@ test("#5 unavailable live identity is unknown, not guessed from Keychain", async
   const state = f.core.getFullState();
   assert.equal(state.current.desktopEmail, null);
   assert.equal(state.current.desktopStatus, "unknown");
+  assert.equal(state.current.desktopPending, false);
   assert.equal(state.current.desktopConsistent, false);
   assert.equal(state.accounts[0].activeDesktop, false);
+  assert.equal(state.accounts[0].pendingDesktop, false);
+});
+
+test("saving a login with unavailable live identity reports verification rather than a confirmed mismatch", async () => {
+  const email = "next@example.test";
+  const f = await fixture({ keychain: auth("old@example.test"), running: true });
+  f.write(f.core.PATHS.loginsJson, [login(email)]);
+  const result = f.core.executeCommandPayload({ id: "unknown-identity", type: "switch", email, target: "all" });
+  assert.equal(result.ok, true);
+  assert.equal(result.pending, false);
+  assert.equal(result.desktopUnverified, true);
+  assert.match(result.message, /桌面端账号待确认$/);
+  assert.equal(f.core.getFullState().lastSwitch.pageMessage, `已保存登录 · ${email} · 桌面端账号待确认`);
 });
 test("#5 stopped desktop reports saved identity without marking it active", async () => {
   const f = await fixture({ keychain: auth("saved@example.test") });

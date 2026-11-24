@@ -89,6 +89,21 @@ test("#5 page distinguishes unknown running identity from an offline saved login
   assert.equal(p.el("desktopNotice").classList.contains("hidden"), true);
 });
 
+test("an unverified desktop with the saved CLI account shows a row status without an apply action", () => {
+  const email = "saved@example.test";
+  const state = baseState();
+  state.current = { desktopRunning: true, desktopStatus: "unknown", desktopSavedEmail: email };
+  state.accounts = [
+    { email, savedDesktop: true, activeCli: true, pendingDesktop: true, isEligible: true, hasCredentials: true },
+    { email: "another@example.test", isEligible: true, hasCredentials: true }
+  ];
+  const p = page(state), html = p.el("accountList").innerHTML;
+  assert.match(accountRow(html, email), /role="status">桌面端账号待确认/);
+  assert.doesNotMatch(accountRow(html, email), /action-apply|data-action="switch-all"/);
+  assert.match(accountRow(html, "another@example.test"), /data-action="switch-all"/);
+  assert.equal(p.el("desktopNotice").classList.contains("hidden"), true);
+});
+
 test("the CLI-only control describes the shared login for recent local agy", () => {
   const state = baseState();
   state.current = { cliEmail: "old@example.test", cliUsesSharedLogin: true };
