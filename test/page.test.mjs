@@ -7,7 +7,7 @@ import { project } from "./fixture.mjs";
 
 function page(state, language = "zh-CN", send) {
   const elements = new Map();
-  let click;
+  let click, toastTimer;
   class Element {
     closest(selector) { return selector === "#btnRefresh" ? this : null; }
   }
@@ -35,13 +35,16 @@ function page(state, language = "zh-CN", send) {
   const context = vm.createContext({
     document, magpie, agyPage, Element,
     setInterval() {},
+    setTimeout(callback) { toastTimer = callback; },
+    clearTimeout() { toastTimer = null; },
     __AGY_SWITCH_STATE__: state
   });
   vm.runInContext(fs.readFileSync(path.join(project, "page/i18n.js"), "utf8"), context);
   vm.runInContext(fs.readFileSync(path.join(project, "page/app.js"), "utf8"), context);
   return { el: id => document.getElementById(id), render: state => context.__AGY_SWITCH_ON_STATE__(state),
     setLanguage: (lang) => localeChanged({ lang }),
-    clickRefresh: () => click({ target: new Element() })
+    clickRefresh: () => click({ target: new Element() }),
+    expireToast: () => toastTimer?.()
   };
 }
 const baseState = () => ({ current: {}, counts: { pro: 0, free: 0, unknown: 0, ineligible: 0 }, accounts: [], preferences: { onlyPro: false } });
@@ -138,11 +141,11 @@ test("quota columns stay in model/window order regardless of input order", () =>
   const html = page(state).el("accountList").innerHTML;
   assert.deepEqual(html.match(/aria-label="[^"]+：[^"]+"/g), [
     'aria-label="GPT / Claude 5h：100%"', 'aria-label="GPT / Claude 7d：0%"',
-    'aria-label="Gemini 5h：86%"', 'aria-label="Gemini 7d：84%"', 'aria-label="Gemini 4 Argon 7d：30%"'
+    'aria-label="Gemini 5h：86%"', 'aria-label="Gemini 7d：84%"'
   ]);
   assert.match(html, /aria-valuenow="0"/);
   assert.match(html, /width:0%/);
-  assert.doesNotMatch(html, /5 小时|7 天/);
+  assert.doesNotMatch(html, /Argon|5 小时|7 天|>账号<|>操作</);
 });
 
 test("missing, invalid and expired cells keep their position without inventing zero", () => {
@@ -157,9 +160,10 @@ test("missing, invalid and expired cells keep their position without inventing z
   const html = page(state).el("accountList").innerHTML;
   assert.deepEqual(html.match(/aria-label="[^"]+：[^"]+"/g), [
     'aria-label="GPT / Claude 5h：0%"', 'aria-label="GPT / Claude 7d：待刷新"',
-    'aria-label="Gemini 5h：未知"', 'aria-label="Gemini 7d：未知"', 'aria-label="Gemini 4 Argon 7d：未知"'
+    'aria-label="Gemini 5h：未知"', 'aria-label="Gemini 7d：未知"'
   ]);
   assert.equal((html.match(/role="progressbar"/g) || []).length, 1);
+  assert.match(html, /Gemini 5h：未知">—</);
 });
 
 test("account types are separate sections and inactive accounts stay collapsed across updates", () => {
@@ -179,6 +183,8 @@ test("account types are separate sections and inactive accounts stay collapsed a
   const disabledRow = p.el("unavailableList").innerHTML;
   assert.match(disabledRow, /unavailable@example.test/);
   assert.match(disabledRow, /已停用/);
+  assert.equal(disabledRow.match(/已停用/g)?.length, 1);
+  assert.doesNotMatch(disabledRow, /已在 Magpie 停用/);
   assert.doesNotMatch(disabledRow, /data-action="switch/);
   assert.equal(p.el("unavailableAccounts").hidden, false);
   p.el("unavailableAccounts").open = true;
@@ -207,6 +213,15 @@ test("Carbon appears only for the windows supplied by an eligible account", () =
   html = p.el("accountList").innerHTML;
   assert.match(accountRow(html, ultra.email), /Gemini 4 Carbon 5h：60%/);
   assert.match(html, /--carbon-width: 2fr/);
+
+  ultra.quota.previousReading = true;
+  p.render(state);
+  assert.doesNotMatch(p.el("accountList").innerHTML, /Gemini 4 Carbon/);
+  ultra.quota.previousReading = false;
+  ultra.quota.pools[0].stale = true;
+  ultra.quota.pools[1].resetsAt = "2000-01-01T00:00:00Z";
+  p.render(state);
+  assert.doesNotMatch(p.el("accountList").innerHTML, /Gemini 4 Carbon/);
 });
 
 test("the page follows Magpie language changes and leaves provider plans intact", () => {
@@ -225,16 +240,22 @@ test("the page follows Magpie language changes and leaves provider plans intact"
   assert.match(html, /Google AI Ultra \(20x\)/);
   assert.match(html, /Gemini 5h: 75%/);
   assert.match(html, /Reset time: /);
-  assert.match(html, /Resets in 2h/);
+  assert.match(html, />in 2h</);
   assert.match(html, /CLI only/);
   assert.doesNotMatch(html, /\p{Script=Han}/u);
 
-  p.render({ ...state, lastSwitch: { id: "refresh", message: "已同步 1 个账号，已刷新 1 个账号的额度", ok: true } });
-  assert.equal(p.el("toastBanner").textContent, "Synced 1 account, refreshed quotas for 1 account");
+  p.render({ ...state, lastSwitch: { id: "refresh", message: "已同步 1 个账号，已刷新 1 个账号的额度", pageMessage: "已刷新", ok: true } });
+  assert.equal(p.el("toastBanner").textContent, "Refreshed");
   p.setLanguage("zh-CN");
   assert.equal(p.el("refreshLabel").textContent, "刷新");
   assert.match(p.el("accountList").innerHTML, /Magpie 首选/);
-  assert.equal(p.el("toastBanner").textContent, "已同步 1 个账号，已刷新 1 个账号的额度");
+  assert.equal(p.el("toastBanner").textContent, "已刷新");
+  p.expireToast();
+  assert.equal(p.el("toastBanner").classList.contains("hidden"), true);
+  p.render({ ...state, lastSwitch: { id: "failed", pageMessage: "1 个账号刷新失败", ok: true, pageWarning: true } });
+  p.expireToast();
+  assert.equal(p.el("toastBanner").className, "toast is-error");
+  assert.equal(p.el("toastBanner").textContent, "1 个账号刷新失败");
 });
 
 test("the plan badge labels saved names in both languages and drops the note when a provider supplies the name", () => {
@@ -257,7 +278,8 @@ test("English shows recoverable configuration errors and disabled provider statu
   p.render({ ...baseState(), accounts: [{ email: "disabled@example.test", isEligible: false,
     tierLabel: "已停用", ineligibleReason: "已在 Magpie 停用" }] });
   assert.match(p.el("unavailableSummary").textContent, /Unavailable accounts/);
-  assert.match(p.el("unavailableList").innerHTML, /Disabled in Magpie/);
+  assert.match(p.el("unavailableList").innerHTML, />Disabled</);
+  assert.doesNotMatch(p.el("unavailableList").innerHTML, /Disabled in Magpie/);
   assert.doesNotMatch(p.el("unavailableList").innerHTML, /\p{Script=Han}/u);
 });
 
@@ -300,7 +322,7 @@ test("the quota timeout follows Magpie's language and keeps available readings v
     pools: [{ pool: "Gemini", window: "7 days", remaining: 72 }]
   } }];
   const p = page(state);
-  assert.match(p.el("accountList").innerHTML, /agy 额度查询超时 · 上次数据 · 更新时间未知/);
+  assert.match(p.el("accountList").innerHTML, /agy 额度查询超时 · 上次数据 更新时间未知/);
   assert.match(p.el("accountList").innerHTML, /aria-valuenow="72"/);
 
   state.accounts[0].quota.refreshError = "context deadline exceeded";
@@ -316,10 +338,10 @@ test("failed quota refresh dates the retained reading, clears on recovery and ha
   state.accounts = [{ email: "saved@example.test", isEligible: true, quota }];
   const p = page(state);
   const html = () => p.el("accountList").innerHTML;
-  const options = { dateStyle: "medium", timeStyle: "short" };
-  assert(html().includes("额度刷新失败 · 上次数据 · 更新于 " + new Date(quota.updatedAt).toLocaleString("zh-CN", options)));
+  const options = { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+  assert(html().includes("刷新失败 · 上次数据 " + new Intl.DateTimeFormat("zh-CN", options).format(new Date(quota.updatedAt)).replace(", ", " ")));
   p.setLanguage("en");
-  assert(html().includes("Quota refresh failed · Previous reading · Updated " + new Date(quota.updatedAt).toLocaleString("en", options)));
+  assert(html().includes("Refresh failed · Previous reading " + new Intl.DateTimeFormat("en", options).format(new Date(quota.updatedAt)).replace(", ", " ")));
   assert.match(html(), /aria-valuenow="0"/);
   quota.refreshError = null;
   p.render(state);
@@ -327,8 +349,8 @@ test("failed quota refresh dates the retained reading, clears on recovery and ha
   quota.error = "Magpie 未能刷新这个账号的额度";
   quota.pools = [];
   p.render(state);
-  assert.match(html(), /Quota refresh failed · No previous reading/);
-  assert.doesNotMatch(html(), /Updated |aria-valuenow=/);
+  assert.match(html(), />Refresh failed</);
+  assert.doesNotMatch(html(), /Previous reading|No previous reading|aria-valuenow=/);
 });
 
 test("a delayed older snapshot cannot replace the latest quota result", () => {

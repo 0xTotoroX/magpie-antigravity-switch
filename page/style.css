@@ -301,10 +301,6 @@ body {
   font-weight: 600;
 }
 
-.actions-heading {
-  text-align: right;
-}
-
 /* 套餐写在账号行内，分组标题保留给辅助技术。 */
 .account-group > h2 {
   position: absolute;
@@ -403,13 +399,13 @@ body {
 
 .account-quotas {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 2fr));
   column-gap: 20px;
   min-width: 0;
 }
 
 .account-quotas.has-carbon {
-  grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr) minmax(0, var(--carbon-width, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 2fr)) minmax(0, var(--carbon-width, 1fr));
 }
 
 .has-carbon .quota-reset {

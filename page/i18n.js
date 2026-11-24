@@ -15,8 +15,6 @@
     unavailableAccounts: ["不可用账号", "Unavailable accounts"],
     noAvailable: ["没有可用账号", "No available accounts"],
     noAccounts: ["暂无 agy-cli 账号", "No agy-cli accounts"],
-    account: ["账号", "Account"],
-    actions: ["操作", "Actions"],
     desktop: ["桌面端", "Desktop"],
     desktopSaved: ["桌面端已保存", "Desktop saved"],
     magpiePreferred: ["Magpie 首选", "Magpie preferred"],
@@ -29,16 +27,14 @@
     unavailable: ["不可用", "Unavailable"],
     disabled: ["已停用", "Disabled"],
     activateDesktop: ["应用桌面端", "Apply to Desktop"],
-    refreshDesktop: ["刷新窗口", "Reload Desktop"],
+    refreshDesktop: ["重载桌面", "Reload Desktop"],
     switch: ["切换", "Switch"],
     cliOnly: ["仅 CLI", "CLI only"],
     cliShared: ["新启动的 CLI 和桌面端共用此登录", "New CLI processes and the desktop app share this sign-in"],
     cliNext: ["供新启动的 CLI 使用", "Use this account for new CLI processes"],
     previousReading: ["上次数据", "Previous reading"],
-    updated: ["更新于", "Updated"],
     timeUnknown: ["更新时间未知", "Update time unknown"],
-    noPreviousReading: ["暂无历史数据", "No previous reading"],
-    refreshFailed: ["额度刷新失败", "Quota refresh failed"],
+    refreshFailed: ["刷新失败", "Refresh failed"],
     quotaWait: ["待刷新", "Needs refresh"],
     unknown: ["未知", "Unknown"],
     quota: ["Magpie 配额", "Magpie quota"],
@@ -80,6 +76,15 @@
     [/^Magpie 未返回可显示的额度读数$/, "Magpie did not return readable quota values."],
     [/^(Antigravity .+) 返回 HTTP (\d+)$/, "$1 returned HTTP $2"],
     [/^已在浏览器打开 GitHub 仓库，欢迎点亮 Star$/, "Opened the GitHub repository."],
+    [/^已打开 GitHub 仓库$/, "Opened the GitHub repository."],
+    [/^已刷新$/, "Refreshed"],
+    [/^刷新失败$/, "Refresh failed"],
+    [/^(\d+) 个账号刷新失败$/, (_, count) => count === "1" ? "1 account failed to refresh" : `${count} accounts failed to refresh`],
+    [/^已保存登录 · (.+)$/, "Sign-in saved · $1"],
+    [/^新启动的 CLI 将使用 (.+)$/, "New CLI sessions will use $1"],
+    [/打开桌面端后生效$/, "Applies the next time you open the desktop app"],
+    [/桌面端重载中$/, "Reloading Desktop"],
+    [/已重启桌面端$/, "Restarted Desktop"],
     [/^已读取 Magpie 配额与本地登录状态$/, "Magpie quotas and local sign-ins reloaded."],
     [/^未检测到 Magpie 页面桥接，请通过 Magpie 侧边栏打开$/, "Open this plugin from the Magpie sidebar to connect it"],
     [/^额度刷新暂未返回结果$/, "The quota refresh has not returned a result yet"],
@@ -138,7 +143,7 @@
   function reset(minutes) {
     const [size, zh, en] = minutes >= 1440 ? [1440, "天", "d"] : minutes >= 60 ? [60, "小时", "h"] : [1, "分", "m"];
     const value = Math.floor(minutes / size);
-    return lang === "en" ? `Resets in ${value}${en}` : `${value}${zh}后重置`;
+    return lang === "en" ? `in ${value}${en}` : `${value}${zh}后`;
   }
 
   const stateLabel = (label) => {

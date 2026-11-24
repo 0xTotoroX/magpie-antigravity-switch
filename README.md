@@ -20,7 +20,7 @@
 - 切换桌面端和 CLI 账号，并按需同步 Magpie 的首选账号。macOS 上本地 agy 1.5+ 的「仅 CLI」会更新新启动的 CLI 与桌面端共用的钥匙串登录。已打开的 CodexHost 会话需重新连接后读取新账号。
 - 区分实际运行账号与已保存、待生效的账号。
 - 页面同步 Magpie 的 agy-cli 供应商账号，邮箱旁标明桌面端和 CLI 的当前登录身份。
-- 按 GPT / Claude、Gemini 和 Gemini 4 Argon 分组，展示 5h / 7d 窗口；仅在返回独立额度时增加 Gemini 4 Carbon 列。缺失、过期和 0% 明确区分。
+- 展示 GPT / Claude 和 Gemini 的 5h 与 7d 额度。仅在返回有效独立读数时显示 Gemini 4 Carbon。缺失显示「—」，过期显示「待刷新」。
 - 按接口原名显示 Pro、Ultra、Enterprise 档位。
 - 保留接口提供的 Ultra 倍数；未知档位不当作免费套餐。
 - 操作前创建并校验本地凭据备份；配置损坏时保留原文件。

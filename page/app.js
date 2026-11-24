@@ -1,14 +1,13 @@
 /**
  * [INPUT]: 本机页面服务的账号快照、i18n.js 文案与 Magpie 页面桥接。
- * [OUTPUT]: 按账号类型分组的 Magpie 模型额度、套餐及上次记录标记、行内登录状态与历史读数时间。
+ * [OUTPUT]: GPT / Claude 与 Gemini 共享额度、套餐来源、登录状态和操作反馈。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
 (() => {
   const QUOTA_GROUPS = [
     { pool: "Claude & GPT", label: "GPT / Claude", windows: ["5 hours", "7 days"] },
-    { pool: "Gemini", label: "Gemini", windows: ["5 hours", "7 days"] },
-    { pool: "Gemini 4 Argon", label: "Gemini 4 Argon", windows: ["7 days"] }
+    { pool: "Gemini", label: "Gemini", windows: ["5 hours", "7 days"] }
   ];
 
   const CARBON_GROUP = { pool: "Gemini 4 Carbon", label: "Gemini 4 Carbon", windows: ["5 hours", "7 days"] };
@@ -20,6 +19,7 @@
   let lastHandledSwitchId = currentState?.lastSwitch?.cmdId || currentState?.lastSwitch?.id || null;
   let pendingCommandType = null;
   let lastToast = "";
+  let toastTimer;
 
   function escapeHtml(str) {
     return String(str ?? "")
@@ -29,12 +29,24 @@
       .replace(/"/g, "&quot;");
   }
 
+  function hideToast() {
+    clearTimeout(toastTimer);
+    lastToast = "";
+    document.getElementById("toastBanner")?.classList.add("hidden");
+  }
+
   function showToast(message, isOk = true) {
     const el = document.getElementById("toastBanner");
     if (!el || !message) return;
+    clearTimeout(toastTimer);
     lastToast = message;
     el.textContent = i18n.backend(message).slice(0, 180);
     el.className = `toast ${isOk ? "is-ok" : "is-error"}`;
+    if (isOk) toastTimer = setTimeout(hideToast, 4500);
+  }
+
+  function showCommandResult(result) {
+    showToast(result.pageMessage ?? result.message, result.ok !== false && !result.pageWarning);
   }
 
   function fillClass(remaining) {
@@ -53,19 +65,23 @@
     return i18n.reset(minutes);
   }
 
+  function isStale(reading) {
+    return Boolean(reading?.stale) || Date.parse(reading?.resetsAt) <= Date.now();
+  }
+
   function renderQuotaCell(group, window, pools) {
     const reading = pools.find((p) => p.pool === group.pool && p.window === window);
     const period = periodLabel(window);
     const resetAt = Date.parse(reading?.resetsAt);
-    const expired = resetAt <= Date.now();
-    const stale = Boolean(reading?.stale || expired);
+    const stale = isStale(reading);
     const known = Number.isFinite(reading?.remaining) && !stale;
     const remaining = known ? Math.max(0, Math.min(100, Math.round(reading.remaining))) : 0;
-    const value = known ? `${remaining}%` : stale ? t("quotaWait") : t("unknown");
+    const value = known ? `${remaining}%` : stale ? t("quotaWait") : "—";
+    const accessibleValue = known || stale ? value : t("unknown");
     const label = `${group.label} ${period}`;
     return `<div class="quota-cell ${known ? fillClass(remaining) : "is-unknown"}" data-pool="${group.pool}" data-window="${window}">
       <span class="quota-period">${period}</span>
-      <strong class="quota-value" aria-label="${label}${i18n.separator()}${value}">${value}</strong>
+      <strong class="quota-value" aria-label="${label}${i18n.separator()}${accessibleValue}">${value}</strong>
       <span class="quota-bar" ${known ? `role="progressbar" aria-label="${label} ${t("remaining")}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${remaining}"` : 'aria-hidden="true"'}>
         <span class="quota-fill" style="width:${known ? remaining : 0}%"></span>
       </span>
@@ -81,6 +97,9 @@
 
   function renderQuotaGrid(account, quotaGroups) {
     if (!account.isEligible) {
+      if (account.tierLabel === "已停用" && account.ineligibleReason === "已在 Magpie 停用") {
+        return '<div class="account-unavailable"></div>';
+      }
       return `<div class="account-unavailable">${escapeHtml(i18n.backend(account.ineligibleReason) || t("verifyAccount"))}</div>`;
     }
     const pools = account.quota?.error ? [] : account.quota?.pools || [];
@@ -95,26 +114,31 @@
   }
 
   function renderQuotaHeader(quotaGroups) {
-    return `<div class="quota-header" aria-hidden="true"><span>${t("account")}</span>
+    return `<div class="quota-header" aria-hidden="true"><span></span>
       <div ${quotaGridAttributes(quotaGroups)}>${quotaGroups.map((group) => `<div class="quota-group">
         <strong>${group.label}</strong>
         <div class="quota-windows ${group.windows.length === 1 ? "is-single" : ""}">${group.windows.map((window) => `<span>${periodLabel(window)}</span>`).join("")}</div>
-      </div>`).join("")}</div><span class="actions-heading">${t("actions")}</span></div>`;
+      </div>`).join("")}</div><span></span></div>`;
   }
 
-  function quotaNotice(quota) {
+  function quotaNotice(quota, quotaGroups) {
     if (!quota) return "";
     const error = quota.error || quota.refreshError;
     if (!error && !quota.previousReading) return "";
     const reason = error === "Magpie 未能刷新这个账号的额度" ? t("refreshFailed") : i18n.backend(error);
-    const hasReading = !quota.error && quota.pools?.some((pool) => Number.isFinite(pool.remaining));
-    if (!hasReading) return [reason, t("noPreviousReading")].filter(Boolean).join(" · ");
+    const hasReading = !quota.error && quota.pools?.some((pool) =>
+      Number.isFinite(pool.remaining) && !isStale(pool) &&
+      quotaGroups.some((group) => group.pool === pool.pool && group.windows.includes(pool.window)));
+    if (!hasReading) return reason;
 
     const date = new Date(quota.updatedAt ?? NaN);
     const updated = Number.isFinite(date.getTime())
-      ? t("updated") + " " + date.toLocaleString(i18n.locale(), { dateStyle: "medium", timeStyle: "short" })
+      ? new Intl.DateTimeFormat(i18n.locale(), {
+        ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+        month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+      }).format(date).replace(", ", " ")
       : t("timeUnknown");
-    return [reason, t("previousReading"), updated].filter(Boolean).join(" · ");
+    return [reason, `${t("previousReading")} ${updated}`].filter(Boolean).join(" · ");
   }
 
   function renderAccountRow(account, quotaGroups = QUOTA_GROUPS) {
@@ -134,9 +158,7 @@
       : i18n.stateLabel(account.tierLabel) || t(isPaid ? "member" : "planUnknown");
     const planNote = account.isEligible && account.plan && account.planFromLoginRecord
       ? " · " + t("lastRecordedPlan") : "";
-    const quotaIssue = account.isEligible
-      ? quotaNotice(account.quota)
-      : i18n.backend(account.ineligibleReason);
+    const quotaIssue = account.isEligible ? quotaNotice(account.quota, quotaGroups) : "";
 
     const canSwitch = account.hasCredentials && account.isEligible;
     const disabled = pendingCommandType !== null || Boolean(currentState?.error);
@@ -184,8 +206,9 @@
 
   function renderAccountGroups(accounts) {
     const carbonWindows = CARBON_GROUP.windows.filter((window) => accounts.some(({ quota }) =>
-      !quota?.error && quota?.pools?.some((pool) =>
-        pool.pool === CARBON_GROUP.pool && pool.window === window && Number.isFinite(pool.remaining))));
+      !quota?.error && !quota?.refreshError && !quota?.previousReading && quota?.pools?.some((pool) =>
+        pool.pool === CARBON_GROUP.pool && pool.window === window &&
+        Number.isFinite(pool.remaining) && !isStale(pool))));
     const quotaGroups = carbonWindows.length
       ? [...QUOTA_GROUPS, { ...CARBON_GROUP, windows: carbonWindows }]
       : QUOTA_GROUPS;
@@ -217,7 +240,7 @@
     const hadStateError = Boolean(currentState?.error);
     currentState = state;
     if (state.error) showToast(state.error, false);
-    else if (hadStateError) document.getElementById("toastBanner")?.classList.add("hidden");
+    else if (hadStateError) hideToast();
 
     const cur = state.current || {};
 
@@ -248,7 +271,7 @@
     const incomingSwitchId = state.lastSwitch?.cmdId || state.lastSwitch?.id || null;
     if (!state.error && incomingSwitchId && incomingSwitchId !== lastHandledSwitchId) {
       lastHandledSwitchId = incomingSwitchId;
-      showToast(state.lastSwitch.message, state.lastSwitch.ok !== false);
+      showCommandResult(state.lastSwitch);
     }
   }
 
@@ -274,7 +297,7 @@
 
     pendingCommandType = cmdPayload.type;
     const isRefreshing = pendingCommandType === "refresh";
-    if (isRefreshing) document.getElementById("toastBanner")?.classList.add("hidden");
+    if (isRefreshing) hideToast();
     render(currentState);
 
     try {
@@ -282,7 +305,7 @@
       receiveState(state);
       const result = state?.lastSwitch;
       if (result?.cmdId !== cmdId) throw Error(t("commandTimeout"));
-      if (lastHandledSwitchId !== cmdId) showToast(result.message, result.ok !== false);
+      if (lastHandledSwitchId !== cmdId) showCommandResult(result);
     } catch (err) {
       const message = err.name === "TimeoutError" ? t(isRefreshing ? "refreshTimeout" : "commandTimeout")
         : `${t("commandFailed")}${i18n.separator()}${err.message || err}`;

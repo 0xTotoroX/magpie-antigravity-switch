@@ -722,7 +722,6 @@ function summarizeQuotaEntry(entry) {
     { pool: "Claude & GPT", name: "7 days", label: "GPT / Claude 7d" },
     { pool: "Gemini", name: "5 hours", label: "Gemini 5h" },
     { pool: "Gemini", name: "7 days", label: "Gemini 7d" },
-    { pool: "Gemini 4 Argon", name: "7 days", label: "Gemini 4 Argon 7d" },
     { pool: "Gemini 4 Carbon", name: "5 hours", label: "Gemini 4 Carbon 5h" },
     { pool: "Gemini 4 Carbon", name: "7 days", label: "Gemini 4 Carbon 7d" }
   ];
@@ -929,20 +928,13 @@ function computeRecommendationScore(account) {
   };
 
   const claudeRem = findRemaining("Claude & GPT") ?? findRemaining("Claude");
-  const argonRem = findRemaining("Gemini 4 Argon") ?? findRemaining("Argon");
   const geminiRem = findRemaining("Gemini");
 
   const memberBonus = account.isPaid ? 25 : 0;
 
-  if (pools.length > 0) {
-    const c = claudeRem ?? 0;
-    const a = argonRem ?? 0;
-    const g = geminiRem ?? 0;
-    const base = c * 0.55 + a * 0.3 + g * 0.15;
-    return Math.round((base + memberBonus) * 10) / 10;
-  }
-
-  return memberBonus;
+  // Preserve the relative weight of the two shared pools.
+  const base = ((claudeRem ?? 0) * 55 + (geminiRem ?? 0) * 15) / 70;
+  return Math.round((base + memberBonus) * 10) / 10;
 }
 
 function isLanguageServerRunning() {
@@ -2173,7 +2165,8 @@ function openGitHubRepo() {
     ok: true,
     action: "open-github",
     url: GITHUB_REPO_URL,
-    message: "已在浏览器打开 GitHub 仓库，欢迎点亮 Star"
+    message: "已打开 GitHub 仓库",
+    pageMessage: ""
   };
 }
 
@@ -2184,7 +2177,7 @@ function isPendingCommand(cmd, receivedAt = Date.now()) {
   return vault.lastExecutedCmdId !== cmd.id && vault.lastSwitch?.cmdId !== cmd.id;
 }
 
-function recordCommandResult(id, { email, ok, message }, { preservePrevious = true } = {}) {
+function recordCommandResult(id, { email, ok, message, pageMessage = null, pageWarning = false }, { preservePrevious = true } = {}) {
   const vault = readVault();
   vault.lastExecutedCmdId = id;
   vault.lastSwitch = {
@@ -2193,7 +2186,9 @@ function recordCommandResult(id, { email, ok, message }, { preservePrevious = tr
     at: new Date().toISOString(),
     email,
     ok,
-    message
+    message,
+    pageMessage,
+    pageWarning
   };
   saveVault(vault);
   syncStateFile();
@@ -2215,12 +2210,35 @@ export async function executeCommandAsync(cmd, { receivedAt } = {}) {
     recordCommandResult(cmd.id, {
       email: result.state?.current?.desktopEmail || null,
       ok: result.ok !== false,
-      message: result.message
+      message: result.message,
+      pageMessage: result.failed === 0 ? "已刷新" : result.ok ? `${result.failed} 个账号刷新失败` : "刷新失败",
+      pageWarning: result.failed > 0
     });
     return result;
   } catch (err) {
     return recordCommandFailure(cmd.id, err);
   }
+}
+
+function switchPageFeedback({ target, email, pending, reloadResult }) {
+  if (target === "cli") {
+    return { pageMessage: `新启动的 CLI 将使用 ${email}${pending ? " · 桌面端待生效" : ""}` };
+  }
+  let desktopStatus = pending ? "桌面端待生效" : null;
+  let pageWarning = false;
+  if (reloadResult?.reloaded) {
+    desktopStatus = reloadResult.reason.includes("已自动重启") ? "已重启桌面端" : "桌面端重载中";
+  } else if (reloadResult?.reason) {
+    if (reloadResult.reason.startsWith("桌面端当前未运行")) desktopStatus = "打开桌面端后生效";
+    else {
+      desktopStatus = reloadResult.reason;
+      pageWarning = true;
+    }
+  }
+  return {
+    pageMessage: [`已保存登录 · ${email}`, desktopStatus].filter(Boolean).join(" · "),
+    pageWarning
+  };
 }
 
 export function executeCommandPayload(cmd, { receivedAt } = {}) {
@@ -2264,7 +2282,8 @@ export function executeCommandPayload(cmd, { receivedAt } = {}) {
     recordCommandResult(cmd.id, {
       email: cmd.email || result?.email || null,
       ok: result?.ok !== false,
-      message: result?.message || "操作完成"
+      message: result?.message || "操作完成",
+      ...(cmd.type === "switch" ? switchPageFeedback(result) : { pageMessage: result?.pageMessage })
     });
     return result;
   } catch (err) {

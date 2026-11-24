@@ -211,7 +211,7 @@ test("#6 recommendations use the most restrictive window in each pool", async ()
   f.write(f.core.PATHS.quotasJson, { [`antigravity/${exhausted}`]: quota(100, 0), [`antigravity/${usable}`]: quota(70, 70) });
   const state = f.core.getFullState();
   assert.equal(state.recommendedEmail, usable);
-  assert.equal(state.accounts.find(a => a.email === exhausted).score, 70);
+  assert.equal(state.accounts.find(a => a.email === exhausted).score, 46.4);
 });
 test("#7 Magpie is authoritative even when the current desktop reports a different quota", async () => {
   const email = "live@example.test", f = await fixture({ keychain: auth(email), liveStatus: live(email, 0) });
@@ -253,7 +253,7 @@ test("#7 old local-only readings remain preserved but cannot classify or auto-im
   assert.deepEqual(f.read(f.core.PATHS.vaultJson).accounts[email].liveQuota, legacyQuota);
 });
 
-test("#7 all five Magpie windows have a stable order, including Gemini 7d", async () => {
+test("#7 the four shared windows keep their order and ignore legacy Argon", async () => {
   const email = "windows@example.test", f = await fixture();
   const entry = quota(80, 60);
   entry.quota.windows.find(w => w.pool === "Gemini" && w.name === "7 days").used = 84;
@@ -265,7 +265,7 @@ test("#7 all five Magpie windows have a stable order, including Gemini 7d", asyn
   assert.equal(summary.updatedAt, entry.at);
   assert.deepEqual(Array.from(summary.pools, p => [p.label, p.remaining]), [
     ["GPT / Claude 5h", 80], ["GPT / Claude 7d", 60],
-    ["Gemini 5h", 100], ["Gemini 7d", 16], ["Gemini 4 Argon 7d", 100]
+    ["Gemini 5h", 100], ["Gemini 7d", 16]
   ]);
 });
 
@@ -683,7 +683,7 @@ test("Magpie refresh keeps exact provider quotas, honors cache age and preserves
   const first = await refresh();
   assert.equal(first.refreshed, 1);
   assert.equal(first.state.accounts[0].tierLabel, "Google AI Pro");
-  assert.deepEqual(Array.from(first.state.accounts[0].quota.pools, (p) => p.remaining), [50, 75, 0]);
+  assert.deepEqual(Array.from(first.state.accounts[0].quota.pools, (p) => p.remaining), [50, 75]);
 
   nowMs += 60_000;
   const callsBefore = f.calls.length;
@@ -711,13 +711,13 @@ test("Magpie refresh keeps exact provider quotas, honors cache age and preserves
   assert.equal(unreadable.refreshed, 0);
   assert.equal(unreadable.failed, 1);
   assert.match(unreadable.state.accounts[0].quota.refreshError, /未返回可显示的额度读数/);
-  assert.deepEqual(Array.from(unreadable.state.accounts[0].quota.pools, (p) => p.remaining), [50, 75, 0]);
+  assert.deepEqual(Array.from(unreadable.state.accounts[0].quota.pools, (p) => p.remaining), [50, 75]);
 
   nowMs += 60_000;
   f.options.refreshQuota = () => ({ cards: [{ ...card, error: "agy usage query timed out.", windows: [] }] });
   const failed = await refresh(true);
   assert.equal(failed.failed, 1);
-  assert.equal(failed.state.accounts[0].quota.pools.length, 3);
+  assert.equal(failed.state.accounts[0].quota.pools.length, 2);
   assert.match(failed.state.accounts[0].quota.refreshError, /timed out/);
   assert.equal(failed.state.accounts[0].quota.updatedAt, readAt);
 });
@@ -747,7 +747,7 @@ test("open-github command launches repository URL in default browser", async () 
   const state = f.core.syncStateFile();
   assert.equal(state.lastSwitch?.cmdId, "cmd-open-github");
   assert.equal(state.lastSwitch?.ok, true);
-  assert.match(state.lastSwitch?.message || "", /GitHub.*Star/);
+  assert.equal(state.lastSwitch?.pageMessage, "");
 });
 
 test("Magpie refresh recognizes Ultra and reports Carbon separately", async () => {
@@ -771,7 +771,7 @@ test("Magpie refresh recognizes Ultra and reports Carbon separately", async () =
   assert.equal(account.tierLabel, "Google AI Ultra");
   assert.equal(account.isPaid, true);
   assert.deepEqual(Array.from(account.quota.pools, (pool) => [pool.label, pool.remaining]), [
-    ["Gemini 5h", 50], ["Gemini 4 Argon 7d", 75], ["Gemini 4 Carbon 5h", 0], ["Gemini 4 Carbon 7d", 40]
+    ["Gemini 5h", 50], ["Gemini 4 Carbon 5h", 0], ["Gemini 4 Carbon 7d", 40]
   ]);
 });
 
@@ -793,6 +793,7 @@ test("refresh command results stay deduplicated and replace prior switch details
   assert.equal(f.calls.filter(({ cmd: name }) => name === "magpie").length, 1);
   const refreshed = f.read(PATHS.vaultJson);
   assert.equal(refreshed.lastExecutedCmdId, cmd.id);
+  assert.equal(refreshed.lastSwitch.pageMessage, "已刷新");
   assert.equal(refreshed.lastSwitch.cmdId, cmd.id);
   assert.equal(refreshed.lastSwitch.target, "cli");
 
