@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 本机页面服务的账号快照、i18n.js 文案与 Magpie 页面桥接。
- * [OUTPUT]: Gemini 与 GPT / Claude 共享额度、套餐简称、已保存的桌面登录、CLI 状态和账号操作区的原位反馈。
+ * [OUTPUT]: Gemini 与 GPT / Claude 共享额度、套餐简称、已保存的桌面登录、独立的刷新进度与行内切换反馈。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -20,6 +20,9 @@
   let trackedCommand;
   let feedback;
   let feedbackTimer;
+  let pendingRefresh = false;
+  let refreshFeedback;
+  let refreshFeedbackTimer;
   let toolbarIssue;
   let detailFeedback;
   let readError = "";
@@ -43,24 +46,24 @@
   function finishCommand(cmd, result) {
     const warning = result.ok === false || Boolean(result.pageWarning);
     const detail = result.pageMessage || result.message || "";
-    let label;
     if (cmd.type === "refresh") {
-      label = result.ok === false ? "refreshFailed" : warning ? "partialFailure" : "refreshed";
-    } else if (cmd.type === "switch") {
-      label = result.ok === false ? "switchFailed" : warning ? "desktopWarning" : cmd.target === "cli" ? "cliSaved" : "saved";
+      const label = result.ok === false ? "refreshFailed" : warning ? "partialFailure" : "refreshed";
+      refreshFeedback = { label, detail, warning, status: warning ? "" : result.pageMessage,
+        accountErrors: result.failedAccounts || [] };
+      clearTimeout(refreshFeedbackTimer);
+      if (!warning) refreshFeedbackTimer = setTimeout(() => { refreshFeedback = null; render(currentState); }, 3500);
+      return;
     }
-    // 保留后台给出的桌面端实际状态，只去掉本行已有的账号名。
-    const prefix = `已保存登录 · ${cmd.email} · `;
-    let status = "";
-    if (!warning && cmd.type === "refresh") status = result.pageMessage || "";
-    if (!warning && cmd.type === "switch" && detail.startsWith(prefix)) status = detail.slice(prefix.length);
-    feedback = { cmd, label, status, detail, warning };
+    const label = cmd.type === "switch"
+      ? result.ok === false ? "switchFailed" : warning ? "desktopWarning" : cmd.target === "cli" ? "cliSaved" : "saved"
+      : null;
+    feedback = { cmd, label, detail, warning };
     clearTimeout(feedbackTimer);
-    if (!warning) feedbackTimer = setTimeout(() => { feedback = null; render(currentState); }, 4500);
+    if (!warning) feedbackTimer = setTimeout(() => { feedback = null; render(currentState); }, 2400);
   }
 
-  function feedbackLabel() {
-    return feedback.status ? i18n.backend(feedback.status) : feedback.label ? t(feedback.label) : i18n.backend(feedback.detail);
+  function feedbackLabel(item = feedback) {
+    return item.status ? i18n.backend(item.status) : item.label ? t(item.label) : i18n.backend(item.detail);
   }
 
   function fillClass(remaining) {
@@ -208,8 +211,6 @@
     const result = feedback?.cmd.email === account.email && feedback;
     const command = busy || result?.cmd;
     const origin = command?.type === "switch" ? ` data-origin="${command.target === "cli" ? "end" : "start"}"` : "";
-    const clock = '<span class="action-icon icon-clock" aria-hidden="true"></span>';
-
     if (busy) {
       return `<span class="action-feedback is-busy"${origin} aria-busy="true"><span class="action-icon icon-spinner" aria-hidden="true"></span><span>${t("switching")}</span></span>`;
     }
@@ -218,11 +219,9 @@
         title="${escapeHtml(i18n.backend(result.detail))}"><span class="action-icon icon-info" aria-hidden="true">i</span><span>${escapeHtml(feedbackLabel())}</span></button>`;
     }
     if (result) {
-      const waiting = ["桌面端重载中", "打开桌面端后生效", "桌面端账号待确认"].includes(result.status);
-      const icon = waiting ? clock : '<span class="action-icon icon-check" aria-hidden="true"></span>';
-      const label = result.status === "打开桌面端后生效" ? t("onLaunch") : feedbackLabel();
-      return `<span class="action-feedback ${waiting ? "is-waiting" : "is-done"}"${origin}
-        title="${escapeHtml(i18n.backend(result.detail))}">${icon}<span>${escapeHtml(label)}</span></span>`;
+      return `<button type="button" class="action-feedback is-done" data-action="feedback-detail"${origin}
+        title="${escapeHtml(i18n.backend(result.detail))}" aria-label="${escapeHtml(i18n.backend(result.detail))}">
+        <span class="action-icon icon-check" aria-hidden="true"></span><span>${escapeHtml(feedbackLabel())}</span></button>`;
     }
     if (showsDesktopCheck(account)) return `<span class="action-feedback is-waiting" role="status">${t("desktopUnknown")}</span>`;
     if (!canSwitch) return "";
@@ -288,13 +287,18 @@
   }
 
   function render(state) {
-    const refreshing = pendingCommand?.type === "refresh";
+    const refreshing = pendingRefresh;
+    const progress = refreshing && state?.refreshProgress;
     const btnRefresh = document.getElementById("btnRefresh");
-    btnRefresh.disabled = Boolean(pendingCommand);
+    btnRefresh.disabled = refreshing;
     btnRefresh.setAttribute("aria-busy", String(refreshing));
-    const refreshResult = feedback?.cmd.type === "refresh" && feedback;
-    document.getElementById("refreshLabel").textContent = refreshing ? t("refreshing")
-      : refreshResult && !refreshResult.warning ? feedbackLabel() : t("refresh");
+    if (refreshFeedback?.accountErrors.length && state?.accounts && !state.error &&
+        !state.accounts.some(a => refreshFeedback.accountErrors.includes(a.email) && (a.quota?.refreshError || a.quota?.error))) {
+      refreshFeedback = null;
+    }
+    const refreshResult = refreshFeedback;
+    document.getElementById("refreshLabel").textContent = progress?.total ? `${t("refreshProgress")} ${progress.completed}/${progress.total}`
+      : refreshing ? t("refreshing") : refreshResult && !refreshResult.warning ? feedbackLabel(refreshResult) : t("refresh");
     document.getElementById("btnGitHubStar").disabled = Boolean(pendingCommand);
 
     const error = state?.error || readError || (feedback?.cmd.type === "open-github" && feedback.warning && feedback.detail);
@@ -312,7 +316,7 @@
     toolbarIssue = sharedQuotaIssue(visibleAccounts, quotaGroups);
     if (refreshResult?.warning) {
       const detail = i18n.backend(refreshResult.detail);
-      if (!toolbarIssue) toolbarIssue = { label: feedbackLabel(), detail };
+      if (!toolbarIssue) toolbarIssue = { label: feedbackLabel(refreshResult), detail };
       else if (refreshResult.label === "refreshFailed" && !toolbarIssue.detail.includes(detail)) {
         toolbarIssue.detail = detail + "\n\n" + toolbarIssue.detail;
       }
@@ -398,30 +402,38 @@
   }
 
   async function sendPluginCommand(cmdPayload) {
-    if (pendingCommand) return;
+    const refresh = cmdPayload.type === "refresh";
+    if (refresh ? pendingRefresh : pendingCommand) return;
     const cmdId = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const fullCmd = { ...cmdPayload, id: cmdId, ts: Date.now(), language: i18n.locale() };
 
-    pendingCommand = fullCmd;
-    trackedCommand = fullCmd;
-    clearTimeout(feedbackTimer);
-    feedback = null;
+    if (refresh) {
+      pendingRefresh = true;
+      clearTimeout(refreshFeedbackTimer);
+      refreshFeedback = null;
+    } else {
+      pendingCommand = fullCmd;
+      trackedCommand = fullCmd;
+      clearTimeout(feedbackTimer);
+      feedback = null;
+    }
     render(currentState);
     try {
       const state = await globalThis.agyPage.command(fullCmd);
       if (state?.lastSwitch?.cmdId !== cmdId) throw Error(t("commandTimeout"));
-      if (trackedCommand) {
+      if (refresh || trackedCommand) {
         finishCommand(fullCmd, state.lastSwitch);
-        trackedCommand = null;
+        if (!refresh) trackedCommand = null;
       }
       receiveState(state);
     } catch (err) {
-      if (trackedCommand) {
+      if (refresh || trackedCommand) {
         const detail = err.name === "TimeoutError" ? t(fullCmd.type === "refresh" ? "refreshTimeout" : "commandTimeout") : err.message;
         finishCommand(fullCmd, { ok: false, message: detail });
       }
     } finally {
-      pendingCommand = null;
+      if (refresh) pendingRefresh = false;
+      else { pendingCommand = null; trackedCommand = null; }
       render(currentState);
     }
   }

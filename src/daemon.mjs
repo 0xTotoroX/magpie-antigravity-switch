@@ -1,6 +1,6 @@
 /**
  * [INPUT]: core.mjs、插件指令文件与本地文件变更。
- * [OUTPUT]: 本机页面服务与旧版选项共用串行队列，后台监听及页面状态同步。
+ * [OUTPUT]: 账号命令串行，额度查询共用并发槽；页面逐账号同步首轮进度。
  * [POS]: Magpie 插件的独立后台进程；使用系统文件锁保持单实例，空闲时热重载。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -15,6 +15,7 @@ import {
   PLUGIN_NAME,
   executeCommandAsync,
   refreshCliAccounts,
+  quotaRefreshFeedback,
   syncStateFile
 } from "./core.mjs";
 
@@ -175,11 +176,39 @@ function startInProcessWatcher(reloadIfChanged) {
     return result;
   };
 
-  const triggerBackgroundRefresh = () => {
-    if (pendingJobs || Date.now() - lastCliRefreshAt < 60_000) return;
-    lastCliRefreshAt = Date.now();
-    enqueue(() => refreshCliAccounts({ force: false }));
-  };
+  let manualRefresh;
+  let progress;
+  let backgroundBusy = false;
+  let nextRetryAt = Infinity;
+  const noteRetry = (at) => { nextRetryAt = Math.min(nextRetryAt, at); };
+
+  function triggerBackgroundRefresh() {
+    if (backgroundBusy || manualRefresh || pendingJobs) return;
+    const now = Date.now();
+    const periodic = now - lastCliRefreshAt >= 60_000;
+    if (!periodic && now < nextRetryAt) return;
+    if (periodic) lastCliRefreshAt = now;
+    nextRetryAt = Infinity;
+    backgroundBusy = true;
+    refreshCliAccounts({ retryOnly: !periodic, preferredEmail: pageState?.current?.cliEmail, onRetryAt: noteRetry })
+      .catch(() => { /* A later scan can recover after a file or provider failure. */ })
+      .finally(() => { backgroundBusy = false; });
+  }
+
+  // Only quota reads overlap switches. Each caller gets its own receipt without
+  // replacing the persisted last switch, including callers joining from a second window.
+  async function refreshPage(cmd) {
+    if (!manualRefresh) {
+      manualRefresh = refreshCliAccounts({
+        force: true, deferRetries: true, preferredEmail: pageState?.current?.cliEmail, onRetryAt: noteRetry,
+        onProgress(value) { progress = value; }
+      }).finally(() => { manualRefresh = null; progress = null; });
+    }
+    const result = await manualRefresh;
+    pageState = result.state;
+    if (pageState.error) throw Error(pageState.error);
+    return { ...pageState, lastSwitch: { cmdId: cmd.id, ...quotaRefreshFeedback(result), failedAccounts: result.errors.map(e => e.email) } };
+  }
 
   const syncFromDisk = () => {
     try {
@@ -209,8 +238,9 @@ function startInProcessWatcher(reloadIfChanged) {
   const pageDir = path.join(PLUGIN_DIR, "page");
   const { port } = JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, "package.json"), "utf8")).magpie.page.service;
   const stopService = startPageService({
-    pageDir, port, getState: () => pageState,
+    pageDir, port, getState: () => progress ? { ...pageState, refreshProgress: progress } : pageState,
     submit(cmd) {
+      if (cmd.type === "refresh") return refreshPage(cmd);
       const receivedAt = Date.now();
       return enqueue(async () => {
         await executeCommandAsync(cmd, { receivedAt });
@@ -246,7 +276,7 @@ function startInProcessWatcher(reloadIfChanged) {
 
   const initialRefreshTimer = setTimeout(triggerBackgroundRefresh, 300);
   const interval = setInterval(() => {
-    if (!pendingJobs && reloadIfChanged()) return;
+    if (!pendingJobs && !manualRefresh && !backgroundBusy && reloadIfChanged()) return;
     syncFromDisk();
     triggerBackgroundRefresh();
   }, 4000);

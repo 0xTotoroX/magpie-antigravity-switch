@@ -56,9 +56,21 @@ test("the macOS watcher ignores a reused PID and hands off its lock when reloadi
       })};
       export const PLUGIN_DIR = ${JSON.stringify(dir)};
       export const PLUGIN_NAME = "magpie-antigravity-switch";
-      export function syncStateFile() {}
-      export async function refreshCliAccounts() {}
+      let lastSwitch;
+      export function syncStateFile() { return { current: {}, accounts: [], lastSwitch }; }
+      export function quotaRefreshFeedback() { return { ok: true, pageMessage: "已刷新" }; }
+      export async function refreshCliAccounts({ force, onProgress }) {
+        if (!force) return;
+        fs.appendFileSync(${JSON.stringify(path.join(state, "quota-calls"))}, "scan\\n");
+        onProgress({ completed: 1, total: 2 });
+        while (!fs.existsSync(${JSON.stringify(path.join(state, "quota-done"))})) await delay(15);
+        return { state: syncStateFile(), errors: [] };
+      }
       export async function executeCommandAsync(cmd, { receivedAt }) {
+        if (cmd.type === "switch") {
+          lastSwitch = { cmdId: cmd.id, ok: true };
+          return;
+        }
         if (fs.existsSync(${JSON.stringify(trace)}) && fs.readFileSync(${JSON.stringify(trace)}, "utf8").includes("done")) return;
         fs.appendFileSync(${JSON.stringify(trace)}, "started:" + process.pid + "\\n");
         while (!fs.existsSync(${JSON.stringify(release)})) await delay(25);
@@ -82,6 +94,32 @@ test("the macOS watcher ignores a reused PID and hands off its lock when reloadi
   assert.equal(backup.exitCode, null);
   assert.equal(backup.signalCode, null);
   assert.equal((await launch(first)).pid, firstPid);
+
+  // Drive the isolated page transport while a quota request is deliberately stalled.
+  const fixtureConnection = path.join(temp, "first/page/.runtime/connection.js");
+  const { port, key } = await waitFor(() => {
+    if (!fs.existsSync(fixtureConnection)) return;
+    return JSON.parse(fs.readFileSync(fixtureConnection, "utf8").split(" = ")[1].split(";")[0]);
+  }, "fixture page service did not start");
+  const request = async (command) => {
+    const response = await fetch(`http://127.0.0.1:${port}/${command ? "command" : "state"}`, {
+      method: command ? "POST" : "GET", headers: { Authorization: "Bearer " + key, "Content-Type": "application/json" },
+      body: command ? JSON.stringify(command) : undefined
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const quotaPath = path.join(state, "quota-calls");
+  const firstRefresh = request({ type: "refresh", id: "cmd-a" });
+  await waitFor(() => fs.existsSync(quotaPath), "first quota read did not start");
+  assert.deepEqual((await request()).refreshProgress, { completed: 1, total: 2 });
+  const secondRefresh = request({ type: "refresh", id: "cmd-b" });
+  const switched = await request({ type: "switch", id: "cmd-c", email: "fixture@example.test", target: "cli" });
+  assert.equal(switched.lastSwitch.cmdId, "cmd-c");
+  fs.writeFileSync(path.join(state, "quota-done"), "");
+  assert.deepEqual((await Promise.all([firstRefresh, secondRefresh])).map(result => result.lastSwitch.cmdId), ["cmd-a", "cmd-b"]);
+  assert.equal(fs.readFileSync(quotaPath, "utf8").trim(), "scan");
+  assert.equal((await request()).lastSwitch.cmdId, "cmd-c");
 
   write(plugins, { plugins: [{ spec: path.dirname(first), options: { cmd: {
     id: "manual-refresh", type: "refresh", ts: Date.now()

@@ -31,7 +31,7 @@ magpie plugin add github:0xTotoroX/magpie-antigravity-switch#v0.2.2
 
 You can refresh quotas or switch an existing account while another Magpie sign-in is waiting for its authorization code.
 
-**Refresh** syncs the agy-cli provider list and asks Magpie to refresh enabled accounts' quotas. Disabled accounts appear under **Unavailable accounts**. A failed refresh shows an error and keeps the previous quota while it remains valid.
+**Refresh** syncs the agy-cli provider list and asks Magpie to refresh enabled accounts' quotas. The current CLI account is checked first. Each row updates as its quota arrives, and you can switch accounts while timed-out requests retry in the background. Disabled accounts appear under **Unavailable accounts**. A failed refresh shows an error and keeps the previous quota while it remains valid.
 
 The table shows the 5-hour and weekly quotas for Gemini on the left and GPT / Claude on the right. Narrow views use circular meters and short reset times. Gemini 4 Carbon appears when a valid separate reading is reported. Missing readings show a dash and expired readings show **Needs refresh**. Common plans use short labels such as Pro and Starter. The plan comes from agy-cli. If the provider omits it, the plugin looks up the saved Antigravity sign-in for the same email. You can view these records without switching accounts.
 

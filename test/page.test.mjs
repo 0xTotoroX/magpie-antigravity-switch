@@ -410,7 +410,8 @@ test("switch feedback belongs to the clicked account and header count follows th
   assert.doesNotMatch(accountRow(list(), "one@example.test"), /切换中/);
   complete();
   await new Promise(setImmediate);
-  assert.match(accountRow(list(), "two@example.test"), />桌面端重载中</);
+  assert.match(accountRow(list(), "two@example.test"), />已保存</);
+  assert.match(accountRow(list(), "two@example.test"), /title="[^"]*桌面端重载中"/);
   assert.doesNotMatch(accountRow(list(), "one@example.test"), /重载中/);
   assert.equal(p.el("refreshLabel").textContent, "刷新");
   p.expireToast();
@@ -428,9 +429,10 @@ test("unverified switch feedback stays in the target row and a CLI-only success 
   p.clickSwitch(email);
   await new Promise(setImmediate);
   const pending = accountRow(p.el("accountList").innerHTML, email);
-  assert.match(pending, /icon-clock/);
-  assert.match(pending, />桌面端账号待确认</);
-  assert.doesNotMatch(pending, /icon-check|应用到桌面/);
+  assert.match(pending, /icon-check/);
+  assert.match(pending, />已保存</);
+  assert.match(pending, /title="[^"]*桌面端账号待确认"/);
+  assert.doesNotMatch(pending, />桌面端账号待确认<|应用到桌面/);
   const cli = page(state, "en", async cmd => ({
     ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: `新启动的 CLI 将使用 ${email}` }
   }));
@@ -458,4 +460,27 @@ test("shared failures with different histories list each date in details and rec
   p.render({ ...state, accounts: state.accounts.slice(2) });
   assert.equal(p.el("quotaStatus").hidden, true);
   assert.match(p.el("accountList").innerHTML, />1 个账号</);
+});
+
+test("quota progress and account switching stay independent when their responses overlap", async () => {
+  const email = "switch@example.test";
+  const state = { ...baseState(), accounts: [{ email, isEligible: true, hasCredentials: true }] };
+  const finish = {};
+  const p = page(state, "zh", cmd => new Promise(resolve => {
+    finish[cmd.type] = (message) => resolve({ ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: message } });
+  }));
+  p.clickRefresh();
+  p.render({ ...state, refreshProgress: { completed: 1, total: 4 } });
+  assert.equal(p.el("refreshLabel").textContent, "刷新中 1/4");
+  assert.doesNotMatch(accountRow(p.el("accountList").innerHTML, email), / disabled/);
+  p.clickSwitch(email, "switch-cli");
+  assert.match(accountRow(p.el("accountList").innerHTML, email), />切换中…</);
+  finish.switch("新启动的 CLI 将使用 " + email);
+  await new Promise(setImmediate);
+  assert.match(accountRow(p.el("accountList").innerHTML, email), />CLI 已切换</);
+  assert.equal(p.el("btnRefresh").disabled, true);
+  finish.refresh("已刷新");
+  await new Promise(setImmediate);
+  assert.equal(p.el("btnRefresh").disabled, false);
+  assert.match(accountRow(p.el("accountList").innerHTML, email), />CLI 已切换</);
 });

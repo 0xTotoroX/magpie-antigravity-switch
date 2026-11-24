@@ -291,6 +291,13 @@ body {
   padding-inline: 7px;
 }
 
+.action-feedback.is-done {
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .action-feedback > span:last-child {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -303,23 +310,10 @@ body {
   height: 12px;
 }
 
-.icon-clock,
 .icon-spinner,
 .icon-info {
   border: 1.4px solid currentColor;
   border-radius: 50%;
-}
-
-.icon-clock { color: var(--warning); }
-.icon-clock::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 4px;
-  height: 3px;
-  width: 3px;
-  border-left: 1px solid currentColor;
-  border-bottom: 1px solid currentColor;
 }
 
 .icon-spinner {
@@ -774,7 +768,7 @@ summary:focus-visible {
 }
 
 @media (max-width: 440px) {
-  .topbar { grid-template-columns: minmax(0, 1fr) 4.7em 68px; gap: 5px; }
+  .topbar { grid-template-columns: minmax(0, 1fr) 4.7em 7.2em; gap: 5px; }
   .title-row { gap: 4px; flex-wrap: nowrap; }
   .title-block h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .support-link { padding: 4px; }

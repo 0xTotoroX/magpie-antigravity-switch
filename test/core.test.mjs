@@ -950,3 +950,78 @@ test("preferring an account merges a login added while the switch was preparing"
   assert.deepEqual(saved.find(x => x.user === added.user), added);
   assert.deepEqual(saved.filter(x => x.first).map(x => x.user), [next]);
 });
+
+test("quota scans prioritize CLI, share calls, publish completed accounts and reuse the host cooldown", async () => {
+  const f = await fixture();
+  const users = ["first@example.test", "slow@example.test", "cli@example.test"];
+  f.write(f.core.PATHS.pluginAuthJson, Object.fromEntries(users.map(email => [email, { metadata: { email } }])));
+  f.write(f.core.PATHS.loginsJson, users.map(user => ({ agent: "plugin:agy-cli", home: user, user, on: true })));
+  const calls = [];
+  const release = new Map();
+  f.options.refreshQuota = args => new Promise(resolve => {
+    const user = args[3];
+    calls.push(user);
+    release.set(user, () => resolve({ cards: [{ provider: "agy-cli", user,
+      readAt: "2026-01-10T10:00:00Z", windows: [{ pool: "Gemini", name: "7 days", used: 32 }] }] }));
+  });
+  let time = Date.now();
+  const options = { now: () => time, preferredEmail: users[2] };
+  const progress = [];
+  const automatic = f.core.refreshCliAccounts(options);
+  const manual = f.core.refreshCliAccounts({ ...options, force: true, deferRetries: true,
+    onProgress: value => progress.push(value.completed) });
+  await new Promise(setImmediate);
+  assert.deepEqual(calls, [users[2], users[0]]);
+  release.get(users[2])();
+  await new Promise(setImmediate);
+  const partial = f.read(f.core.PATHS.cliQuotaCache).accounts;
+  assert.equal(partial[users[2]].quota.windows[0].used, 32);
+  assert.equal(partial[users[0]], undefined);
+  assert.deepEqual(progress, [0, 1]);
+  release.get(users[0])();
+  release.get(users[1])();
+  const [, result] = await Promise.all([automatic, manual]);
+  assert.equal(result.refreshed, 3);
+  assert.equal(calls.length, 3);
+  time += 5000;
+  const again = await f.core.refreshCliAccounts({ ...options, force: true, deferRetries: true });
+  assert.equal(again.skipped, 3);
+  assert.equal(again.refreshed, 0);
+  assert.equal(calls.length, 3);
+  assert.equal(f.read(f.core.PATHS.cliQuotaCache).accounts[users[2]].fetchedAt, "2026-01-10T10:00:00Z");
+});
+
+test("deferred retries survive the first pass and only retry still-enabled failed logins once", async () => {
+  const f = await fixture();
+  const users = ["retry@example.test", "removed@example.test", "healthy@example.test"];
+  const logins = users.map(user => ({ agent: "plugin:agy-cli", user, home: user, on: true }));
+  f.write(f.core.PATHS.pluginAuthJson, Object.fromEntries(users.map(email => [email, { metadata: { email } }])));
+  f.write(f.core.PATHS.loginsJson, logins);
+  let now = Date.now();
+  const calls = [];
+  const readAt = new Date(now - 3600_000).toISOString();
+  f.write(f.core.PATHS.cliQuotaCache, { accounts: { [users[0]]: { providerHome: users[0], fetchedAt: readAt,
+    quota: { readAt, windows: [{ pool: "Gemini", name: "7 days", used: 37 }] } } } });
+  f.options.refreshQuota = args => {
+    const user = args[3];
+    calls.push(user);
+    return { cards: [{ provider: "agy-cli", user, ...(user === users[2] ? {
+      windows: [{ pool: "Gemini", name: "7 days", used: 4 }] } : { error: "context deadline exceeded" }) }] };
+  };
+  const run = opts => f.core.refreshCliAccounts({ now: () => now, ...opts });
+  const first = await run({ force: true, deferRetries: true });
+  assert.equal(first.failed, 2);
+  assert.equal(first.refreshed, 1);
+  assert.equal(f.read(f.core.PATHS.cliQuotaCache).accounts[users[0]].fetchedAt, readAt);
+  await run({ force: true, deferRetries: true });
+  assert.equal(calls.length, 3);
+  f.write(f.core.PATHS.loginsJson, logins.filter(x => x.user !== users[1]));
+  now += 31_000;
+  const retry = await run({ retryOnly: true });
+  assert.equal(retry.failed, 1);
+  assert.deepEqual(calls, [...users, users[0]]);
+  assert.equal(f.read(f.core.PATHS.cliQuotaCache).accounts[users[0]].manualRetryAt, undefined);
+  now += 31_000;
+  await run({ retryOnly: true });
+  assert.equal(calls.length, 4);
+});
