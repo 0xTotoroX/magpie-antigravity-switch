@@ -21,6 +21,8 @@
     refreshProgress: ["刷新中", "Refreshing"],
     refreshing: ["刷新中…", "Refreshing…"],
     loading: ["正在读取账号…", "Loading accounts…"],
+    savedDesktopDetail: ["登录已保存。当前桌面会话使用的账号可在 Antigravity 的账号菜单中查看。", "The desktop sign-in is saved. Check the account menu in Antigravity to see which account the open session is using."],
+    quotaRetry: ["后台补查中", "Retrying"],
     desktopUnknown: ["桌面端账号待确认", "Desktop unverified"],
     unavailableAccounts: ["不可用账号", "Unavailable accounts"],
     noAvailable: ["没有可用账号", "No available accounts"],

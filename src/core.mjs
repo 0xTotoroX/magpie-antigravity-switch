@@ -1031,6 +1031,11 @@ function buildState(inputs, agyCliOnly = false) {
     const vaultEntry = vault.accounts?.[email] || null;
     const cliCacheEntry = findCliCacheEntry(cliCache, email);
     const quotaSummary = resolveQuotaForEmail(email, quotas, cliCache, agyCliOnly);
+    if (quotaSummary && cliCacheEntry?.manualRetryAt > 0 &&
+        matchingLogins.some(item => item.on && !item.lapsed && isMagpieAgyCliLogin(item, pluginAuth) &&
+          getLoginHomeKey(item) === cliCacheEntry.providerHome)) {
+      quotaSummary.retryPending = true;
+    }
 
     const credCandidates = collectCredentialCandidates(email, matchingLogins, pluginCredentials, vaultEntry);
     const hasLegacyAccessOnly = matchingLogins.some(

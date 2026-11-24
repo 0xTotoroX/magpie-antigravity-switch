@@ -1012,6 +1012,7 @@ test("deferred retries survive the first pass and only retry still-enabled faile
   const first = await run({ force: true, deferRetries: true });
   assert.equal(first.failed, 2);
   assert.equal(first.refreshed, 1);
+  assert.equal(first.state.accounts.filter(account => account.quota?.retryPending).length, 2);
   assert.equal(f.read(f.core.PATHS.cliQuotaCache).accounts[users[0]].fetchedAt, readAt);
   await run({ force: true, deferRetries: true });
   assert.equal(calls.length, 3);
@@ -1019,6 +1020,7 @@ test("deferred retries survive the first pass and only retry still-enabled faile
   now += 31_000;
   const retry = await run({ retryOnly: true });
   assert.equal(retry.failed, 1);
+  assert(!retry.state.accounts.some(account => account.quota?.retryPending));
   assert.deepEqual(calls, [...users, users[0]]);
   assert.equal(f.read(f.core.PATHS.cliQuotaCache).accounts[users[0]].manualRetryAt, undefined);
   now += 31_000;

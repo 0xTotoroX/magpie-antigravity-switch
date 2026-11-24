@@ -19,7 +19,7 @@ function page(state, language = "zh-CN", send) {
         const classes = new Set();
         const attributes = new Map();
         elements.set(id, { textContent: "", innerHTML: "", disabled: false, className: "", title: "",
-          addEventListener() {},
+          addEventListener() {}, showModal() { this.open = true; },
           setAttribute: (name, value) => attributes.set(name, value),
           getAttribute: (name) => attributes.get(name),
           classList: { add: c => classes.add(c), remove: c => classes.delete(c),
@@ -46,6 +46,7 @@ function page(state, language = "zh-CN", send) {
   vm.runInContext(fs.readFileSync(path.join(project, "page/app.js"), "utf8"), context);
   return { el: id => document.getElementById(id), render: state => context.__AGY_SWITCH_ON_STATE__(state),
     setLanguage: (lang) => localeChanged({ lang }),
+    clickSaved: () => click({ target: new Element('[data-action="saved-login-detail"]') }),
     clickRefresh: () => click({ target: new Element("#btnRefresh") }),
     clickSwitch: (email, action = "switch-all") => click({ target: new Element("[data-action]", { "data-action": action, "data-email": email }) }),
     expireToast: () => toastTimer?.()
@@ -423,7 +424,7 @@ test("unverified switch feedback stays in the target row and a CLI-only success 
   const account = { email, isEligible: true, hasCredentials: true };
   const state = { ...baseState(), accounts: [account] };
   const p = page(state, "zh", async (cmd) => ({
-    ...state, current: { desktopRunning: true }, accounts: [{ ...account, activeCli: true, savedDesktop: true }],
+    ...state, current: { desktopRunning: true }, accounts: [{ ...account, activeCli: true, savedDesktop: true, activeDesktopKeychain: true }],
     lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: `已保存登录 · ${email} · 桌面端账号待确认` }
   }));
   p.clickSwitch(email);
@@ -433,6 +434,21 @@ test("unverified switch feedback stays in the target row and a CLI-only success 
   assert.match(pending, />已保存</);
   assert.match(pending, /title="[^"]*桌面端账号待确认"/);
   assert.doesNotMatch(pending, />桌面端账号待确认<|应用到桌面/);
+  p.expireToast();
+  const saved = accountRow(p.el("accountList").innerHTML, email);
+  assert.match(saved, /data-action="saved-login-detail"/);
+  assert.match(saved, /icon-check/);
+  assert.match(saved, />已保存</);
+  p.clickSaved();
+  assert.equal(p.el("feedbackDialog").open, true);
+  assert.match(p.el("feedbackBody").textContent, /桌面会话.*账号菜单/);
+  p.setLanguage("en");
+  assert.match(p.el("accountList").innerHTML, />Saved</);
+  p.render({ ...state, current: { desktopRunning: true },
+    accounts: [{ ...account, savedDesktop: true, activeDesktopKeychain: true, activeCli: false }] });
+  const split = accountRow(p.el("accountList").innerHTML, email);
+  assert.match(split, /data-action="saved-login-detail"/);
+  assert.match(split, /data-action="switch-cli"/);
   const cli = page(state, "en", async cmd => ({
     ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: `新启动的 CLI 将使用 ${email}` }
   }));
@@ -483,4 +499,26 @@ test("quota progress and account switching stay independent when their responses
   await new Promise(setImmediate);
   assert.equal(p.el("btnRefresh").disabled, false);
   assert.match(accountRow(p.el("accountList").innerHTML, email), />CLI 已切换</);
+});
+
+
+test("pending retries keep history in the toolbar, then expose final failures or disappear on recovery", () => {
+  const state = baseState();
+  const quota = { retryPending: true, refreshError: "context deadline exceeded",
+    updatedAt: "2026-11-24T16:23:00+08:00", pools: [{ pool: "Gemini", window: "7 days", remaining: 40 }] };
+  state.accounts = [{ email: "a@example.test", quota, isEligible: true }];
+  const p = page(state);
+  const notice = p.el("quotaStatus");
+  assert.match(notice.innerHTML, /后台补查中.*上次数据/);
+  assert.doesNotMatch(notice.innerHTML, /查询超时/);
+  assert.match(notice.title, /查询超时/);
+  assert(notice.classList.contains("is-retrying"));
+  assert.doesNotMatch(p.el("accountList").innerHTML, /后台补查中/);
+  quota.retryPending = false;
+  p.render(state);
+  assert.match(notice.innerHTML, /查询超时/);
+  assert(!notice.classList.contains("is-retrying"));
+  delete quota.refreshError;
+  p.render(state);
+  assert(notice.hidden);
 });

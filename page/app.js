@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 本机页面服务的账号快照、i18n.js 文案与 Magpie 页面桥接。
- * [OUTPUT]: Gemini 与 GPT / Claude 共享额度、套餐简称、已保存的桌面登录、独立的刷新进度与行内切换反馈。
+ * [OUTPUT]: Gemini 与 GPT / Claude 共享额度、套餐简称、已保存的桌面登录、额度补查进度、行内切换反馈与已保存登录的标记。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -165,7 +165,7 @@
   function quotaNotice(quota, quotaGroups) {
     if (!quota) return "";
     const error = quota.error || quota.refreshError;
-    if (systemQuotaReason(error) || (!error && !quota.previousReading)) return "";
+    if (quota.retryPending || systemQuotaReason(error) || (!error && !quota.previousReading)) return "";
     const reason = error === "Magpie 未能刷新这个账号的额度" ? t("refreshFailed") : i18n.backend(error);
     return [reason, previousReading(quota, quotaGroups)].filter(Boolean).join(" · ");
   }
@@ -173,10 +173,12 @@
   function sharedQuotaIssue(accounts, quotaGroups) {
     const groups = new Map();
     for (const { email, quota } of accounts) {
-      const reason = systemQuotaReason(quota?.error || quota?.refreshError);
+      const error = quota?.error || quota?.refreshError;
+      const retrying = Boolean(error && quota.retryPending);
+      const reason = retrying ? t("quotaRetry") : systemQuotaReason(error);
       if (!reason) continue;
       if (!groups.has(reason)) groups.set(reason, []);
-      groups.get(reason).push({ email, previous: previousReading(quota, quotaGroups) });
+      groups.get(reason).push({ email, cause: retrying ? i18n.backend(error) : "", previous: previousReading(quota, quotaGroups) });
     }
     if (!groups.size) return null;
     const summaries = [];
@@ -188,10 +190,10 @@
       const history = same ? rows[0].previous : rows.some((row) => row.previous) ? t("previousReading") : "";
       const summary = [reason, scope, history].filter(Boolean).join(" · ");
       summaries.push(summary);
-      const affected = rows.map(({ email, previous }) => [email, !same && previous].filter(Boolean).join(" · "));
-      details.push(all && same ? summary : summary + "\n" + affected.join("\n"));
+      const affected = rows.map(({ email, cause, previous }) => [email, cause, !same && previous].filter(Boolean).join(" · "));
+      details.push(all && same && !rows[0].cause ? summary : summary + "\n" + affected.join("\n"));
     }
-    return { label: summaries.join(" · "), detail: details.join("\n\n") };
+    return { label: summaries.join(" · "), detail: details.join("\n\n"), retryOnly: groups.size === 1 && groups.has(t("quotaRetry")) };
   }
 
   function desktopNeedsConfirmation(current) {
@@ -201,6 +203,11 @@
   function showsDesktopCheck(account) {
     return account.isEligible && account.savedDesktop && account.activeCli &&
       desktopNeedsConfirmation(currentState?.current);
+  }
+
+  function savedLoginButton(label, classes) {
+    return `<button type="button" class="${classes}" data-action="saved-login-detail" title="${t("savedDesktopDetail")}">
+      <span class="action-icon icon-check" aria-hidden="true"></span><span>${t(label)}</span></button>`;
   }
 
   function renderActions(account) {
@@ -223,7 +230,10 @@
         title="${escapeHtml(i18n.backend(result.detail))}" aria-label="${escapeHtml(i18n.backend(result.detail))}">
         <span class="action-icon icon-check" aria-hidden="true"></span><span>${escapeHtml(feedbackLabel())}</span></button>`;
     }
-    if (showsDesktopCheck(account)) return `<span class="action-feedback is-waiting" role="status">${t("desktopUnknown")}</span>`;
+    if (showsDesktopCheck(account)) {
+      if (account.activeDesktopKeychain) return savedLoginButton("saved", "action-feedback is-done");
+      return `<span class="action-feedback is-waiting" role="status">${t("desktopUnknown")}</span>`;
+    }
     if (!canSwitch) return "";
     return `<button type="button" class="btn btn-primary" data-action="switch-all" data-email="${email}" ${locked}>${t("switch")}</button>
       <button type="button" class="btn btn-cli" data-action="switch-cli" data-email="${email}"
@@ -232,8 +242,9 @@
 
   function renderAccountRow(account, quotaGroups = QUOTA_GROUPS) {
     const desktopSavedOffline = account.savedDesktop && currentState?.current?.desktopStatus === "stopped";
-    const statusTags = [
-      desktopSavedOffline ? t("desktopSaved") : null,
+    const showSavedBadge = account.isEligible && account.savedDesktop && account.activeDesktopKeychain && !showsDesktopCheck(account);
+    const statusTags = (showSavedBadge ? savedLoginButton("desktopSaved", "tag tag-active saved-login-tag") : "") + [
+      desktopSavedOffline && !showSavedBadge ? t("desktopSaved") : null,
       account.activeMagpieFirst ? t("magpiePreferred") : null
     ].filter(Boolean).map((label) => `<span class="tag tag-active">${label}</span>`).join("");
 
@@ -311,7 +322,7 @@
     const desktopNotice = document.getElementById("desktopNotice");
     const allAccounts = Array.isArray(state?.accounts) ? state.accounts : [];
     const visibleAccounts = allAccounts.filter((account) => account.isEligible);
-    desktopNotice?.classList.toggle("hidden", Boolean(state?.error) || !desktopNeedsConfirmation(cur) || visibleAccounts.some(showsDesktopCheck));
+    desktopNotice?.classList.toggle("hidden", Boolean(state?.error) || !desktopNeedsConfirmation(cur) || visibleAccounts.some(account => showsDesktopCheck(account) || (account.savedDesktop && account.activeDesktopKeychain)));
     const quotaGroups = visibleQuotaGroups(visibleAccounts);
     toolbarIssue = sharedQuotaIssue(visibleAccounts, quotaGroups);
     if (refreshResult?.warning) {
@@ -323,8 +334,9 @@
     }
     const issueButton = document.getElementById("quotaStatus");
     issueButton.hidden = !toolbarIssue;
+    issueButton.classList.toggle("is-retrying", Boolean(toolbarIssue?.retryOnly));
     issueButton.innerHTML = toolbarIssue
-      ? `<span class="issue-long">${escapeHtml(toolbarIssue.label)}</span><span class="issue-short">${escapeHtml(toolbarIssue.label.includes(t("previousReading")) ? t("previousReading") : t("quotaProblem"))}</span>`
+      ? `<span class="issue-long">${escapeHtml(toolbarIssue.label)}</span><span class="issue-short">${escapeHtml(toolbarIssue.retryOnly ? t("quotaRetry") : toolbarIssue.label.includes(t("previousReading")) ? t("previousReading") : t("quotaProblem"))}</span>`
       : "";
     issueButton.title = toolbarIssue?.detail || "";
     issueButton.setAttribute("aria-label", issueButton.title);
@@ -456,6 +468,10 @@
     }
     if (target.closest("#quotaStatus") && toolbarIssue) {
       openDetails(t("quota"), toolbarIssue.detail);
+      return;
+    }
+    if (target.closest('[data-action="saved-login-detail"]')) {
+      openDetails(t("desktopSaved"), t("savedDesktopDetail"));
       return;
     }
     if (target.closest('[data-action="feedback-detail"]') && feedback) {
