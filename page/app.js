@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 本机页面服务的账号快照、i18n.js 文案与 Magpie 页面桥接。
- * [OUTPUT]: Gemini 与 GPT / Claude 共享额度、套餐简称、登录状态和操作反馈。
+ * [OUTPUT]: Gemini 与 GPT / Claude 共享额度、套餐简称、登录状态和账号操作区的原位反馈。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -21,8 +21,10 @@
   let feedback;
   let feedbackTimer;
   let toolbarIssue;
+  let detailFeedback;
   let readError = "";
   let visibleListMarkup;
+  let shownRowOperation;
 
   function escapeHtml(str) {
     return String(str ?? "")
@@ -191,8 +193,50 @@
     return { label: summaries.join(" · "), detail: details.join("\n\n") };
   }
 
+  function renderActions(account) {
+    const email = escapeHtml(account.email);
+    const locked = pendingCommand || currentState?.error ? "disabled" : "";
+    const pending = account.pendingDesktop;
+    const canSwitch = account.hasCredentials && account.isEligible;
+    const busy = pendingCommand?.email === account.email && pendingCommand;
+    const result = feedback?.cmd.email === account.email && feedback;
+    const command = busy || result?.cmd;
+    const origin = command?.type === "switch" ? ` data-origin="${command.target === "cli" ? "end" : "start"}"` : "";
+    const clock = '<span class="action-icon icon-clock" aria-hidden="true"></span>';
+
+    if (busy) {
+      const label = busy.type === "reload-desktop" ? t(pending ? "applying" : "reloading") : t("switching");
+      return `<span class="action-feedback is-busy"${origin} aria-busy="true"><span class="action-icon icon-spinner" aria-hidden="true"></span><span>${label}</span></span>`;
+    }
+    if (result?.warning) {
+      return `<button type="button" class="btn action-feedback feedback-warning"${origin} data-action="feedback-detail"
+        title="${escapeHtml(i18n.backend(result.detail))}"><span class="action-icon icon-info" aria-hidden="true">i</span><span>${escapeHtml(feedbackLabel())}</span></button>`;
+    }
+    // When the command leaves Desktop pending, offer the next action immediately.
+    if (result && !(pending && result.status === "桌面端待生效" && canSwitch)) {
+      const waiting = result.cmd.type === "reload-desktop" ||
+        ["桌面端重载中", "桌面端待生效", "打开桌面端后生效"].includes(result.status);
+      const icon = waiting ? clock : '<span class="action-icon icon-check" aria-hidden="true"></span>';
+      const label = result.status === "打开桌面端后生效" ? t("onLaunch") : feedbackLabel();
+      return `<span class="action-feedback ${waiting ? "is-waiting" : "is-done"}"${origin}
+        title="${escapeHtml(i18n.backend(result.detail))}">${icon}<span>${escapeHtml(label)}</span></span>`;
+    }
+    if (!canSwitch) return pending ? `<span class="action-feedback is-waiting">${clock}${t("desktopPending")}</span>` : "";
+
+    if (pending) {
+      const hint = `${t("activateDesktop")} · ${t("desktopPending")}`;
+      return `<button type="button" class="btn btn-ghost action-apply" data-action="reload-desktop" data-email="${email}"
+        aria-label="${hint}" title="${hint}" ${locked}>${clock}${t("activateDesktop")}</button>`;
+    }
+    if (account.activeDesktop && account.activeCli && account.savedDesktop) {
+      return `<button type="button" class="btn btn-ghost" data-action="reload-desktop" data-email="${email}" ${locked}>${t("refreshDesktop")}</button>`;
+    }
+    return `<button type="button" class="btn btn-primary" data-action="switch-all" data-email="${email}" ${locked}>${t("switch")}</button>
+      <button type="button" class="btn btn-cli" data-action="switch-cli" data-email="${email}"
+        title="${t(currentState?.current?.cliUsesSharedLogin ? "cliShared" : "cliNext")}" ${locked}>${t("cliOnly")}</button>`;
+  }
+
   function renderAccountRow(account, quotaGroups = QUOTA_GROUPS) {
-    const isCurrentAll = account.activeDesktop && account.activeCli && account.savedDesktop;
     const desktopSavedOffline = account.savedDesktop && currentState?.current?.desktopStatus === "stopped";
     const statusTags = [
       account.activeDesktop ? t("desktop") : desktopSavedOffline ? t("desktopSaved") : null,
@@ -203,43 +247,6 @@
     const tierClass = !account.isEligible ? "tag-bad" : isPaid ? "tag-pro" : account.isFree ? "tag-free" : "tag-unknown";
     const tierLabel = shortPlan((account.isEligible && account.plan) || i18n.stateLabel(account.tierLabel) || t(isPaid ? "member" : "planUnknown"));
     const quotaIssue = account.isEligible ? quotaNotice(account.quota, quotaGroups) : "";
-
-    const canSwitch = account.hasCredentials && account.isEligible;
-    const disabled = Boolean(pendingCommand) || Boolean(currentState?.error);
-    const cliSwitchHint = currentState?.current?.cliUsesSharedLogin
-      ? t("cliShared")
-      : t("cliNext");
-
-    let actionButtons = "";
-    if (canSwitch) {
-      if (isCurrentAll || account.pendingDesktop) {
-        actionButtons = `
-          <button type="button" class="btn btn-ghost" data-action="reload-desktop" data-email="${escapeHtml(account.email)}" ${disabled ? "disabled" : ""}>
-            ${t(account.pendingDesktop ? "activateDesktop" : "refreshDesktop")}
-          </button>
-        `;
-      } else {
-        actionButtons = `
-          <button type="button" class="btn btn-primary" data-action="switch-all" data-email="${escapeHtml(account.email)}" ${disabled ? "disabled" : ""}>
-            ${t("switch")}
-          </button>
-          <button type="button" class="btn btn-cli" data-action="switch-cli" data-email="${escapeHtml(account.email)}" title="${cliSwitchHint}" ${disabled ? "disabled" : ""}>
-            ${t("cliOnly")}
-          </button>
-        `;
-      }
-    }
-
-    const busy = pendingCommand?.email === account.email && pendingCommand;
-    const result = feedback?.cmd.email === account.email && feedback;
-    if (busy) {
-      actionButtons = `<span class="action-feedback" aria-busy="true">${t(busy.type === "reload-desktop" ? "reloading" : "switching")}</span>`;
-    } else if (result) {
-      const label = escapeHtml(feedbackLabel());
-      actionButtons = result.warning
-        ? `<button type="button" class="btn feedback-warning" data-action="feedback-detail" title="${escapeHtml(i18n.backend(result.detail))}">${label} ⓘ</button>`
-        : `<span class="action-feedback" title="${escapeHtml(i18n.backend(result.detail))}">${label}</span>`;
-    }
 
     return `
       <div class="account-row">
@@ -252,9 +259,8 @@
           ${quotaIssue ? `<span class="account-issue">${escapeHtml(quotaIssue)}</span>` : ""}
         </div>
         ${renderQuotaGrid(account, quotaGroups)}
-        <div class="account-actions">
-          ${actionButtons}
-          ${account.pendingDesktop && !busy && !result ? `<span class="desktop-pending">${t("desktopPending")}</span>` : ""}
+        <div class="account-actions" id="actions-${escapeHtml(account.email)}" tabindex="-1">
+          ${renderActions(account)}
         </div>
       </div>
     `;
@@ -337,8 +343,31 @@
       const markup = visibleAccounts.length ? renderAccountGroups(visibleAccounts, quotaGroups)
         : `<div class="account-empty-state">${t(allAccounts.length ? "noAvailable" : "noAccounts")}</div>`;
       if (markup !== visibleListMarkup) {
+        const focused = document.activeElement;
+        const focusedSlot = focused?.closest(".account-actions");
+        const originalAction = focused?.dataset.action;
+        const restoreAction = originalAction && originalAction !== "feedback-detail" ? originalAction : focusedSlot?.dataset.returnAction;
         listEl.innerHTML = markup;
         visibleListMarkup = markup;
+        if (focusedSlot) {
+          const slot = document.getElementById(focusedSlot.id);
+          if (slot && restoreAction) slot.dataset.returnAction = restoreAction;
+          const buttons = Array.from(slot?.querySelectorAll("button:enabled") || []);
+          const next = buttons.find(button => button.dataset.action === restoreAction) || buttons[0] || slot;
+          next?.focus({ preventScroll: true });
+        }
+        // Animate only the row whose operation changed, including its return to idle.
+        const operation = pendingCommand?.email ? pendingCommand : feedback?.cmd.email ? feedback : null;
+        if (operation !== shownRowOperation) {
+          const shown = operation || shownRowOperation;
+          const email = shown?.cmd?.email || shown?.email;
+          shownRowOperation = operation;
+          const slot = email && document.getElementById("actions-" + email);
+          if (slot?.animate && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+            slot.animate([{ opacity: 0.45, transform: "translateY(2px)" }, { opacity: 1, transform: "none" }],
+              { duration: 160, easing: "ease-out" });
+          }
+        }
       }
     }
 
@@ -402,6 +431,14 @@
     }
   }
 
+  document.getElementById("feedbackDialog").addEventListener("close", () => {
+    if (detailFeedback && detailFeedback === feedback) {
+      feedback = null;
+      render(currentState);
+    }
+    detailFeedback = null;
+  });
+
   document.addEventListener("click", (ev) => {
     const target = ev.target instanceof Element ? ev.target : null;
     if (!target) return;
@@ -415,9 +452,8 @@
       return;
     }
     if (target.closest('[data-action="feedback-detail"]') && feedback) {
+      detailFeedback = feedback;
       openDetails(feedbackLabel(), i18n.backend(feedback.detail));
-      feedback = null;
-      render(currentState);
       return;
     }
     if (target.closest("#btnGitHubStar")) {

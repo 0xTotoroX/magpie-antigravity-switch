@@ -19,6 +19,7 @@ function page(state, language = "zh-CN", send) {
         const classes = new Set();
         const attributes = new Map();
         elements.set(id, { textContent: "", innerHTML: "", disabled: false, className: "", title: "",
+          addEventListener() {},
           setAttribute: (name, value) => attributes.set(name, value),
           getAttribute: (name) => attributes.get(name),
           classList: { add: c => classes.add(c), remove: c => classes.delete(c),
@@ -68,8 +69,8 @@ test("#5 page labels the running desktop and pending login on their own rows", (
   const p = page(state), html = p.el("accountList").innerHTML;
   assert.match(accountRow(html, "old@example.test"), /tag-active">桌面端</);
   assert.match(accountRow(html, "next@example.test"), /cli-status">CLI</);
-  assert.match(accountRow(html, "next@example.test"), /desktop-pending">桌面端待生效</);
-  assert.match(accountRow(html, "next@example.test"), /应用桌面端/);
+  assert.match(accountRow(html, "next@example.test"), /aria-label="应用到桌面 · 桌面端待生效"/);
+  assert.doesNotMatch(accountRow(html, "next@example.test"), />桌面端待生效</);
   assert.doesNotMatch(accountRow(html, "next@example.test"), /tag-active">桌面端</);
   assert.match(accountRow(html, "magpie@example.test"), /tag-active">Magpie 首选</);
   assert.doesNotMatch(html, /当前使用中|推荐|is-current/);
@@ -398,6 +399,30 @@ test("switch feedback belongs to the clicked account and header count follows th
   assert.equal(p.el("refreshLabel").textContent, "刷新");
   p.expireToast();
   assert.doesNotMatch(list(), /桌面端重载中/);
+});
+
+test("a pending desktop offers Apply immediately while a CLI-only success confirms just CLI", async () => {
+  const email = "target@example.test";
+  const account = { email, isEligible: true, hasCredentials: true };
+  const state = { ...baseState(), accounts: [account] };
+  const p = page(state, "zh", async (cmd) => ({
+    ...state, accounts: [{ ...account, activeCli: true, savedDesktop: true, pendingDesktop: true }],
+    lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: `已保存登录 · ${email} · 桌面端待生效` }
+  }));
+  p.clickSwitch(email);
+  await new Promise(setImmediate);
+  const pending = accountRow(p.el("accountList").innerHTML, email);
+  assert.match(pending, /class="btn btn-ghost action-apply"/);
+  assert.doesNotMatch(pending, /icon-check|>桌面端待生效</);
+  const cli = page(state, "en", async cmd => ({
+    ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: `新启动的 CLI 将使用 ${email}` }
+  }));
+  cli.clickSwitch(email, "switch-cli");
+  assert.match(cli.el("accountList").innerHTML, /is-busy" data-origin="end"/);
+  await new Promise(setImmediate);
+  const success = accountRow(cli.el("accountList").innerHTML, email);
+  assert.match(success, /icon-check/);
+  assert.match(success, />CLI switched</);
 });
 
 test("shared failures with different histories list each date in details and recover independently of account errors", () => {

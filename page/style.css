@@ -1,6 +1,6 @@
 /*
  * [INPUT]: Magpie 主题变量与账号分组、五窗口额度页面结构。
- * [OUTPUT]: 深浅模式的不透明页面底色、平面按钮、刷新反馈、账号列表、宽屏额度条与窄屏额度圆盘。
+ * [OUTPUT]: 深浅模式的不透明页面底色、平面按钮、刷新反馈、行内切换动效、账号列表、宽屏额度条与窄屏额度圆盘。
  * [POS]: Antigravity Switch 页面唯一样式入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -222,8 +222,7 @@ body {
   border-color: var(--border);
 }
 
-.cli-status,
-.desktop-pending {
+.cli-status {
   color: var(--muted);
   font-size: 12px;
 }
@@ -280,21 +279,90 @@ body {
 #feedbackBody { margin-block: 8px 14px; white-space: pre-line; overflow-wrap: anywhere; }
 #closeFeedback { display: block; margin-inline-start: auto; }
 
-.action-feedback, .feedback-warning {
-  display: block;
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.action-feedback,
+.action-apply {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  max-width: 100%;
   white-space: nowrap;
   font-size: 12px;
-  line-height: 28px;
-  color: var(--secondary);
 }
-.feedback-warning {
-  padding-block: 0;
-  background: transparent;
+
+.action-feedback {
+  color: var(--secondary);
+  padding-inline: 7px;
+}
+
+.action-feedback > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.action-apply {
+  padding-inline: 8px;
   border-color: var(--border);
+}
+
+.action-icon {
+  position: relative;
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+}
+
+.icon-clock,
+.icon-spinner,
+.icon-info {
+  border: 1.4px solid currentColor;
+  border-radius: 50%;
+}
+
+.icon-clock { color: var(--warning); }
+.icon-clock::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  height: 3px;
+  width: 3px;
+  border-left: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+}
+
+.icon-spinner {
+  color: var(--primary);
+  border-color: color-mix(in srgb, currentColor 25%, transparent);
+  border-top-color: currentColor;
+  border-right-color: currentColor;
+}
+
+.icon-check::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 1px;
+  width: 8px;
+  height: 4px;
+  border: solid var(--success-ink);
+  border-width: 0 0 1.6px 1.6px;
+  transform: rotate(-45deg);
+}
+
+.feedback-warning {
+  background: transparent;
   color: var(--warning);
+}
+.icon-info {
+  text-align: center;
+  font: 600 9px/10px system-ui, sans-serif;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .icon-spinner { animation: refresh-spin .85s linear infinite; }
+  .account-actions .btn:active:not(:disabled) { transform: scale(.97); }
+  .account-actions .btn { transition: transform 120ms ease-out, border-color 150ms, background-color 150ms; }
 }
 
 .hidden {
@@ -580,14 +648,21 @@ body {
 .account-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 4px;
+  width: 120px;
+  min-height: 28px;
   justify-self: end;
+  border-radius: 7px;
 }
 
-.account-actions:has(.desktop-pending) {
-  flex-direction: column;
-  align-items: end;
-  gap: 3px;
+.account-actions:has([data-action="switch-all"]) { justify-content: space-between; }
+.account-actions:has([data-origin="start"]) { justify-content: flex-start; }
+.account-actions:has([data-origin="end"]) { justify-content: flex-end; }
+
+.account-actions:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 .btn:focus-visible,
@@ -608,7 +683,7 @@ summary:focus-visible {
 @media (max-width: 980px) {
   .quota-header,
   .account-row {
-    grid-template-columns: minmax(180px, 1.1fr) minmax(0, 2.6fr) 120px;
+    grid-template-columns: minmax(204px, 1.1fr) minmax(0, 2.6fr) 120px;
     column-gap: 14px;
     padding: 12px;
   }
@@ -725,11 +800,7 @@ summary:focus-visible {
   .account-actions {
     grid-area: auto;
     justify-self: start;
-  }
-  .account-actions:has(.desktop-pending) {
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
+    justify-content: flex-start;
   }
 }
 @media (prefers-reduced-motion: reduce) {
