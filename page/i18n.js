@@ -10,9 +10,11 @@
     supportTitle: ["打开 GitHub 仓库并点亮 Star 支持项目", "Open the GitHub repository and star the project"],
     close: ["关闭", "Close"],
     switching: ["切换中…", "Switching…"],
+    switchingShort: ["切换中", "Switching"],
     saved: ["已保存", "Saved"],
     cliSaved: ["CLI 已切换", "CLI switched"],
     switchFailed: ["切换失败", "Switch failed"],
+    switchFailedShort: ["失败", "Failed"],
     desktopWarning: ["桌面端待确认", "Check Desktop"],
     refreshed: ["已刷新", "Refreshed"],
     partialFailure: ["部分失败", "Partial failure"],
@@ -22,8 +24,9 @@
     refreshing: ["刷新中…", "Refreshing…"],
     loading: ["正在读取账号…", "Loading accounts…"],
     savedDesktopDetail: ["登录已保存。当前桌面会话使用的账号可在 Antigravity 的账号菜单中查看。", "The desktop sign-in is saved. Check the account menu in Antigravity to see which account the open session is using."],
-    quotaRetry: ["后台补查中", "Retrying"],
+    quotaRetry: ["补查中", "Retrying"],
     desktopUnknown: ["桌面端账号待确认", "Desktop unverified"],
+    desktopPendingShort: ["待确认", "Check"],
     unavailableAccounts: ["不可用账号", "Unavailable accounts"],
     noAvailable: ["没有可用账号", "No available accounts"],
     noAccounts: ["暂无 agy-cli 账号", "No agy-cli accounts"],
@@ -53,6 +56,7 @@
     refreshTimeout: ["额度刷新暂未返回结果", "The quota refresh has not returned a result yet"],
     commandTimeout: ["操作暂未返回结果", "The operation has not returned a result yet"],
     quotaQueryTimeout: ["agy 额度查询超时", "The agy quota query timed out"],
+    quotaTimedOut: ["额度超时", "Timed out"],
     commandFailed: ["指令发送失败", "Could not send the command"]
   };
 

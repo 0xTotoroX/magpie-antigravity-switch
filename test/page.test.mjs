@@ -47,6 +47,7 @@ function page(state, language = "zh-CN", send) {
   return { el: id => document.getElementById(id), render: state => context.__AGY_SWITCH_ON_STATE__(state),
     setLanguage: (lang) => localeChanged({ lang }),
     clickSaved: () => click({ target: new Element('[data-action="saved-login-detail"]') }),
+    clickFeedback: () => click({ target: new Element('[data-action="feedback-detail"]') }),
     clickRefresh: () => click({ target: new Element("#btnRefresh") }),
     clickSwitch: (email, action = "switch-all") => click({ target: new Element("[data-action]", { "data-action": action, "data-email": email }) }),
     expireToast: () => toastTimer?.()
@@ -55,7 +56,7 @@ function page(state, language = "zh-CN", send) {
 const baseState = () => ({ current: {}, counts: { pro: 0, free: 0, unknown: 0, ineligible: 0 }, accounts: [], preferences: { onlyPro: false } });
 
 function accountRow(html, email) {
-  return html.split('<div class="account-row">').find((row) => row.startsWith("\n") && row.includes(`class="account-email">${email}</span>`)) || "";
+  return html.split('<div class="account-row">').find((row) => row.startsWith("\n") && row.includes(`title="${email}">${email}</span>`)) || "";
 }
 
 test("#5 legacy snapshot flags cannot mark a desktop session active or offer Apply", () => {
@@ -69,8 +70,8 @@ test("#5 legacy snapshot flags cannot mark a desktop session active or offer App
   state.recommendedEmail = "next@example.test";
   const p = page(state), html = p.el("accountList").innerHTML;
   assert.doesNotMatch(accountRow(html, "old@example.test"), /tag-active">桌面端</);
-  assert.match(accountRow(html, "next@example.test"), /cli-status">CLI</);
-  assert.match(accountRow(html, "next@example.test"), /role="status">桌面端账号待确认/);
+  assert.match(accountRow(html, "next@example.test"), /cli-status" title="[^"]+">CLI</);
+  assert.match(accountRow(html, "next@example.test"), /desktop-pending" title="桌面端账号待确认">待确认/);
   assert.doesNotMatch(html, /应用到桌面/);
   assert.doesNotMatch(accountRow(html, "next@example.test"), />桌面端待生效</);
   assert.doesNotMatch(accountRow(html, "next@example.test"), /tag-active">桌面端</);
@@ -84,14 +85,14 @@ test("#5 page distinguishes unknown running identity from an offline saved login
   const p = page(state);
   assert.equal(p.el("desktopNotice").classList.contains("hidden"), false);
   p.render({ ...state, current: { desktopSavedEmail: "saved@example.test", desktopStatus: "stopped" },
-    accounts: [{ email: "saved@example.test", savedDesktop: true, isEligible: true }] });
+    accounts: [{ email: "saved@example.test", savedDesktop: true, activeDesktopKeychain: true, isEligible: true }] });
   const html = p.el("accountList").innerHTML;
-  assert.match(html, /tag-active">桌面端已保存</);
+  assert.match(html, /account-email" title="saved@example.test">saved@example.test<\/span><button[^>]*class="desktop-mark"/);
   assert.doesNotMatch(html, /tag-active">桌面端</);
   assert.equal(p.el("desktopNotice").classList.contains("hidden"), true);
 });
 
-test("an unverified desktop with the saved CLI account shows a row status without an apply action", () => {
+test("an unverified desktop uses the identity area and keeps the regular switch actions", () => {
   const email = "saved@example.test";
   const state = baseState();
   state.current = { desktopRunning: true, desktopStatus: "unknown", desktopSavedEmail: email };
@@ -100,8 +101,9 @@ test("an unverified desktop with the saved CLI account shows a row status withou
     { email: "another@example.test", isEligible: true, hasCredentials: true }
   ];
   const p = page(state), html = p.el("accountList").innerHTML;
-  assert.match(accountRow(html, email), /role="status">桌面端账号待确认/);
-  assert.doesNotMatch(accountRow(html, email), /action-apply|data-action="switch-all"/);
+  assert.match(accountRow(html, email), /account-email" title="saved@example.test">saved@example.test<\/span><span class="desktop-pending"/);
+  assert.match(accountRow(html, email), /data-action="switch-all"/);
+  assert.doesNotMatch(accountRow(html, email), /action-apply|icon-check/);
   assert.match(accountRow(html, "another@example.test"), /data-action="switch-all"/);
   assert.equal(p.el("desktopNotice").classList.contains("hidden"), true);
 });
@@ -402,17 +404,19 @@ test("switch feedback belongs to the clicked account and header count follows th
   const state = { ...baseState(), accounts: [account("one@example.test"), account("two@example.test"), { email: "off@example.test" }] };
   let complete;
   const p = page(state, "zh", (cmd) => new Promise(resolve => {
-    complete = () => resolve({ ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: "已保存登录 · two@example.test · 桌面端重载中" } });
+    complete = () => resolve({ ...state, accounts: [state.accounts[0], { ...state.accounts[1], savedDesktop: true, activeDesktopKeychain: true }],
+      lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: "已保存登录 · two@example.test · 桌面端重载中" } });
   }));
   p.clickSwitch("two@example.test");
   const list = () => p.el("accountList").innerHTML;
   assert.match(list(), />2 个账号</);
-  assert.match(accountRow(list(), "two@example.test"), /切换中/);
+  assert.match(accountRow(list(), "two@example.test"), /is-busy" id="switch-all-two@example.test"/);
+  assert.match(accountRow(list(), "two@example.test"), /id="switch-cli-two@example.test"\s+data-action="switch-cli"/);
   assert.doesNotMatch(accountRow(list(), "one@example.test"), /切换中/);
   complete();
   await new Promise(setImmediate);
-  assert.match(accountRow(list(), "two@example.test"), />已保存</);
-  assert.match(accountRow(list(), "two@example.test"), /title="[^"]*桌面端重载中"/);
+  assert.match(accountRow(list(), "two@example.test"), /desktop-mark/);
+  assert.match(accountRow(list(), "two@example.test"), /id="switch-all-two@example.test"\s+data-action="switch-all"/);
   assert.doesNotMatch(accountRow(list(), "one@example.test"), /重载中/);
   assert.equal(p.el("refreshLabel").textContent, "刷新");
   p.expireToast();
@@ -431,33 +435,51 @@ test("unverified switch feedback stays in the target row and a CLI-only success 
   await new Promise(setImmediate);
   const pending = accountRow(p.el("accountList").innerHTML, email);
   assert.match(pending, /icon-check/);
-  assert.match(pending, />已保存</);
-  assert.match(pending, /title="[^"]*桌面端账号待确认"/);
+  assert.match(pending, /aria-label="桌面端已保存"/);
+  assert.match(pending, /data-action="switch-all"/);
   assert.doesNotMatch(pending, />桌面端账号待确认<|应用到桌面/);
   p.expireToast();
   const saved = accountRow(p.el("accountList").innerHTML, email);
   assert.match(saved, /data-action="saved-login-detail"/);
   assert.match(saved, /icon-check/);
-  assert.match(saved, />已保存</);
+  assert.match(saved, /aria-label="桌面端已保存"/);
   p.clickSaved();
   assert.equal(p.el("feedbackDialog").open, true);
   assert.match(p.el("feedbackBody").textContent, /桌面会话.*账号菜单/);
   p.setLanguage("en");
-  assert.match(p.el("accountList").innerHTML, />Saved</);
+  assert.match(p.el("accountList").innerHTML, /aria-label="Desktop saved"/);
   p.render({ ...state, current: { desktopRunning: true },
     accounts: [{ ...account, savedDesktop: true, activeDesktopKeychain: true, activeCli: false }] });
   const split = accountRow(p.el("accountList").innerHTML, email);
   assert.match(split, /data-action="saved-login-detail"/);
   assert.match(split, /data-action="switch-cli"/);
   const cli = page(state, "en", async cmd => ({
-    ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: `新启动的 CLI 将使用 ${email}` }
+    ...state, accounts: [{ ...account, activeCli: true }],
+    lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: `新启动的 CLI 将使用 ${email}` }
   }));
   cli.clickSwitch(email, "switch-cli");
-  assert.match(cli.el("accountList").innerHTML, /is-busy" data-origin="end"/);
+  assert.match(cli.el("accountList").innerHTML, /is-busy" id="switch-cli-target@example.test"/);
   await new Promise(setImmediate);
   const success = accountRow(cli.el("accountList").innerHTML, email);
-  assert.match(success, /icon-check/);
-  assert.match(success, />CLI switched</);
+  assert.match(success, /cli-status" title="[^"]+">CLI</);
+  assert.match(success, /data-action="switch-cli"/);
+  assert.doesNotMatch(success, /icon-check/);
+});
+
+test("a switch error replaces only the clicked button and opens the failure details", async () => {
+  const email = "target@example.test";
+  const state = { ...baseState(), accounts: [{ email, isEligible: true, hasCredentials: true }] };
+  const p = page(state, "zh", async cmd => ({
+    ...state, lastSwitch: { cmdId: cmd.id, ok: false, message: "测试失败详情" }
+  }));
+  p.clickSwitch(email, "switch-cli");
+  await new Promise(setImmediate);
+  const row = accountRow(p.el("accountList").innerHTML, email);
+  assert.match(row, /data-action="switch-all"/);
+  assert.match(row, /id="switch-cli-target@example.test" data-action="feedback-detail"\s+aria-label="切换失败"/);
+  p.clickFeedback();
+  assert.equal(p.el("feedbackTitle").textContent, "切换失败");
+  assert.equal(p.el("feedbackBody").textContent, "测试失败详情");
 });
 
 test("shared failures with different histories list each date in details and recover independently of account errors", () => {
@@ -490,15 +512,15 @@ test("quota progress and account switching stay independent when their responses
   assert.equal(p.el("refreshLabel").textContent, "刷新中 1/4");
   assert.doesNotMatch(accountRow(p.el("accountList").innerHTML, email), / disabled/);
   p.clickSwitch(email, "switch-cli");
-  assert.match(accountRow(p.el("accountList").innerHTML, email), />切换中…</);
+  assert.match(accountRow(p.el("accountList").innerHTML, email), />切换中</);
   finish.switch("新启动的 CLI 将使用 " + email);
   await new Promise(setImmediate);
-  assert.match(accountRow(p.el("accountList").innerHTML, email), />CLI 已切换</);
+  assert.equal(p.el("operationStatus").textContent, `${email} · CLI 已切换`);
   assert.equal(p.el("btnRefresh").disabled, true);
   finish.refresh("已刷新");
   await new Promise(setImmediate);
   assert.equal(p.el("btnRefresh").disabled, false);
-  assert.match(accountRow(p.el("accountList").innerHTML, email), />CLI 已切换</);
+  assert.equal(p.el("operationStatus").textContent, `${email} · CLI 已切换`);
 });
 
 
@@ -509,7 +531,7 @@ test("pending retries keep history in the toolbar, then expose final failures or
   state.accounts = [{ email: "a@example.test", quota, isEligible: true }];
   const p = page(state);
   const notice = p.el("quotaStatus");
-  assert.match(notice.innerHTML, /后台补查中.*上次数据/);
+  assert.match(notice.innerHTML, /补查中.*上次数据/);
   assert.doesNotMatch(notice.innerHTML, /查询超时/);
   assert.match(notice.title, /查询超时/);
   assert(notice.classList.contains("is-retrying"));
@@ -517,6 +539,8 @@ test("pending retries keep history in the toolbar, then expose final failures or
   quota.retryPending = false;
   p.render(state);
   assert.match(notice.innerHTML, /查询超时/);
+  assert.match(notice.innerHTML, /issue-short">额度超时/);
+  assert.match(notice.title, /a@example.test/);
   assert(!notice.classList.contains("is-retrying"));
   delete quota.refreshError;
   p.render(state);
