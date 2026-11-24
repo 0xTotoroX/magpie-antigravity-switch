@@ -124,9 +124,14 @@ jobs:
           const expected = process.env.RELEASE_SHA256.toLowerCase();
           const filename = `${name}-${version}.tgz`;
           const archive = `${registry}/${name}/-/${filename}`;
-          const fetchFresh = url => fetch(url, {
-            cache: "no-store", redirect: "error", signal: AbortSignal.timeout(8_000)
-          });
+          const fetchFresh = url => {
+            const request = new URL(url);
+            // Each attempt must bypass any cached 404 from before the package was processed.
+            request.searchParams.set("release-check", String(Date.now()));
+            return fetch(request, {
+              cache: "no-store", redirect: "error", signal: AbortSignal.timeout(8_000)
+            });
+          };
           const verificationDeadline = Date.now() + 5 * 60_000;
 
           while (Date.now() < verificationDeadline) {
