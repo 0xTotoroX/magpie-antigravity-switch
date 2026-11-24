@@ -127,8 +127,9 @@ jobs:
           const fetchFresh = url => fetch(url, {
             cache: "no-store", redirect: "error", signal: AbortSignal.timeout(8_000)
           });
+          const verificationDeadline = Date.now() + 5 * 60_000;
 
-          for (let attempt = 0; attempt < 12; attempt++) {
+          while (Date.now() < verificationDeadline) {
             const [latest, download] = await Promise.allSettled([
               fetchFresh(`${registry}/${name}/latest`).then(async response => response.ok && (await response.json()).version),
               fetchFresh(archive).then(async response => response.ok &&
@@ -142,7 +143,8 @@ jobs:
               console.log(`Verified npm latest is ${version} and ${filename} matches GitHub Release.`);
               process.exit(0);
             }
-            if (attempt < 11) await delay(5000);
+            const remaining = verificationDeadline - Date.now();
+            if (remaining > 0) await delay(Math.min(5_000, remaining));
           }
           throw new Error("The publish request succeeded, but the public registry has not yet confirmed the version and download. Check npm before retrying publish.");
           JS
