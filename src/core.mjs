@@ -42,6 +42,9 @@ export const PATHS = {
 const SUPPORTED_LOGIN_AGENTS = ["plugin:agy-cli", "plugin:antigravity", "antigravity"];
 const QUOTA_PROVIDER_PREFIXES = ["agy-cli", "antigravity"];
 const AGY_HOME_ID = /^[a-z0-9]{8,32}$/;
+const MAGPIE_QUOTA_COMMAND_MS = 55_000;
+const MAGPIE_REFRESH_GAP_MS = 31_000; // The host measures 30s from inside the CLI.
+const MANUAL_RETRY_BUDGET_MS = 165_000; // Leave room for state sync before the page deadline.
 const CLI_QUOTA_TTL_MS = 15 * 60_000;
 const CLI_BACKOFF_FIRST_MS = 5 * 60_000;
 const CLI_BACKOFF_MAX_MS = 60 * 60_000;
@@ -2025,7 +2028,7 @@ function refreshMagpieQuota(user) {
   const command = fs.existsSync(app) ? app : "magpie";
   return new Promise((resolve, reject) => {
     execFile(command, ["quota", "refresh", "agy-cli", user, "--json"], {
-      encoding: "utf8", timeout: 55_000, maxBuffer: 1024 * 1024,
+      encoding: "utf8", timeout: MAGPIE_QUOTA_COMMAND_MS, maxBuffer: 1024 * 1024,
       // The provider supports an 18s allowance within Magpie's 20s usage call.
       env: { AGY_BRIDGE_USAGE_TIMEOUT_MS: "18000", ...process.env }
     }, (error, stdout, stderr) => {
@@ -2074,7 +2077,7 @@ export async function refreshCliAccounts({ force = false, now = () => Date.now()
     if (!force && prev?.providerHome === home) {
       const fetchedMs = Date.parse(prev.fetchedAt || prev.attemptedAt || "");
       if ((prev.retryAfter && nowMs < prev.retryAfter) ||
-          (!prev.error && Number.isFinite(fetchedMs) && nowMs - fetchedMs < CLI_QUOTA_TTL_MS)) {
+          (!prev.error && !prev.refreshError && Number.isFinite(fetchedMs) && nowMs - fetchedMs < CLI_QUOTA_TTL_MS)) {
         skipped++;
         continue;
       }
@@ -2084,47 +2087,66 @@ export async function refreshCliAccounts({ force = false, now = () => Date.now()
 
   let refreshed = 0;
   const updates = new Map();
-  const errors = [];
-  const pending = jobs.entries();
-  const workers = Array.from({ length: Math.min(jobs.size, 4) }, async () => {
-    for (const [email, { user, home, prev }] of pending) {
-      try {
-        const { quota, cached } = await refreshMagpieQuota(user);
-        if (quota.error) throw new Error(quota.error);
-        const reused = Boolean(cached || quota.readDeferred || quota.asOf);
-        // A cached reply without a reading time cannot be dated by this attempt.
-        const readAt = quota.readAt || quota.asOf || (reused ? null : attemptedAt);
-        const reading = {
-          plan: quota.plan || null,
-          readAt,
-          asOf: quota.asOf || null,
-          windows: Array.isArray(quota.windows) ? quota.windows : []
-        };
-        if (summarizeQuotaEntry({ quota: reading }).pools.length === 0) {
-          throw new Error("Magpie 未返回可显示的额度读数");
-        }
-        updates.set(email, { providerHome: home, fetchedAt: readAt, attemptedAt, quota: reading });
-        if (reused) skipped++;
-        else refreshed++;
-      } catch (err) {
-        const message = sanitizeErrorMessage(err);
-        const sameLogin = !prev?.providerHome || prev.providerHome === home;
-        const keepPriorQuota = sameLogin && prev?.quota?.windows?.length > 0;
-        const failureCount = (sameLogin ? prev?.failureCount || 0 : 0) + 1;
-        const backoff = Math.min(CLI_BACKOFF_FIRST_MS * 2 ** Math.min(failureCount - 1, 4), CLI_BACKOFF_MAX_MS);
-        updates.set(email, {
-          providerHome: home, attemptedAt, failureCount, retryAfter: nowMs + backoff,
-          fetchedAt: keepPriorQuota ? prev.fetchedAt : attemptedAt,
-          quota: keepPriorQuota ? prev.quota : { readAt: attemptedAt, windows: [] },
-          error: keepPriorQuota ? null : message,
-          refreshError: keepPriorQuota ? message : null
-        });
-        errors.push({ email, error: message });
+  const errors = new Map();
+  const retries = [];
+  async function readAccount(email, job, allowRetry) {
+    const { user, home, prev } = job;
+    const startedAt = now();
+    try {
+      const { quota, cached } = await refreshMagpieQuota(user);
+      if (quota.error) throw new Error(quota.error);
+      const reused = Boolean(cached || quota.readDeferred || quota.asOf);
+      // A cached reply without a reading time cannot be dated by this attempt.
+      const readAt = quota.readAt || quota.asOf || (reused ? null : attemptedAt);
+      const reading = {
+        plan: quota.plan || null,
+        readAt,
+        asOf: quota.asOf || null,
+        windows: Array.isArray(quota.windows) ? quota.windows : []
+      };
+      if (summarizeQuotaEntry({ quota: reading }).pools.length === 0) {
+        throw new Error("Magpie 未返回可显示的额度读数");
+      }
+      errors.delete(email);
+      updates.set(email, { providerHome: home, fetchedAt: readAt, attemptedAt, quota: reading });
+      if (reused) skipped++;
+      else refreshed++;
+    } catch (err) {
+      const message = sanitizeErrorMessage(err);
+      const sameLogin = !prev?.providerHome || prev.providerHome === home;
+      const keepPriorQuota = sameLogin && prev?.quota?.windows?.length > 0;
+      const failureCount = (sameLogin ? prev?.failureCount || 0 : 0) + 1;
+      const backoff = Math.min(CLI_BACKOFF_FIRST_MS * 2 ** Math.min(failureCount - 1, 4), CLI_BACKOFF_MAX_MS);
+      updates.set(email, {
+        providerHome: home, attemptedAt, failureCount, retryAfter: nowMs + backoff,
+        fetchedAt: keepPriorQuota ? prev.fetchedAt : attemptedAt,
+        quota: keepPriorQuota ? prev.quota : { readAt: attemptedAt, windows: [] },
+        error: keepPriorQuota ? null : message,
+        refreshError: keepPriorQuota ? message : null
+      });
+      errors.set(email, { email, error: message });
+      const transient = /^(?:agy usage query timed out\.?|context deadline exceeded)$/i.test(message) ||
+        message === "agy's stored sign-in couldn't be renewed. Check the network or proxy.";
+      if (allowRetry && transient) {
+        retries.push({ email, job, retryAt: startedAt + MAGPIE_REFRESH_GAP_MS });
       }
     }
-  });
+  }
 
+  // Each Magpie command starts a provider host and agy with its own startup deadline.
+  const pending = jobs.entries();
+  const workers = Array.from({ length: Math.min(jobs.size, 2) }, async () => {
+    for (const [email, job] of pending) await readAccount(email, job, force);
+  });
   await Promise.all(workers);
+
+  // Retry timeouts one at a time, after Magpie can ask the account again.
+  for (const { email, job, retryAt } of retries) {
+    const current = now();
+    if (Math.max(current, retryAt) + MAGPIE_QUOTA_COMMAND_MS > nowMs + MANUAL_RETRY_BUDGET_MS) break;
+    if (retryAt > current) await new Promise(resolve => setTimeout(resolve, retryAt - current));
+    await readAccount(email, job, false);
+  }
 
   if (updates.size) {
     const latestCache = readCliQuotaCache();
@@ -2137,7 +2159,7 @@ export async function refreshCliAccounts({ force = false, now = () => Date.now()
   }
 
   const state = syncStateFile();
-  const failed = errors.length;
+  const failed = errors.size;
   const details = [`已同步 ${state.accounts.length} 个账号`];
   if (refreshed) details.push(`已刷新 ${refreshed} 个账号的额度`);
   if (skipped) details.push(`沿用 ${skipped} 个账号的近期额度`);
@@ -2149,7 +2171,7 @@ export async function refreshCliAccounts({ force = false, now = () => Date.now()
     skipped,
     failed,
     total: jobs.size,
-    errors,
+    errors: Array.from(errors.values()),
     message: details.join("，"),
     state
   };
@@ -2207,11 +2229,16 @@ export async function executeCommandAsync(cmd, { receivedAt } = {}) {
   try {
     const result = await refreshCliAccounts({ force: true });
     if (result.state?.error) throw new Error(result.state.error);
+    let pageMessage = "已刷新";
+    if (result.failed) pageMessage = result.ok ? `${result.failed} 个账号刷新失败` : "刷新失败";
+    else if (!result.total) pageMessage = "没有可刷新的账号";
+    else if (!result.refreshed) pageMessage = "已沿用近期额度";
+    else if (result.skipped) pageMessage = `已刷新 ${result.refreshed} 个，沿用 ${result.skipped} 个`;
     recordCommandResult(cmd.id, {
       email: result.state?.current?.desktopEmail || null,
       ok: result.ok !== false,
       message: result.message,
-      pageMessage: result.failed === 0 ? "已刷新" : result.ok ? `${result.failed} 个账号刷新失败` : "刷新失败",
+      pageMessage,
       pageWarning: result.failed > 0
     });
     return result;

@@ -258,6 +258,18 @@ test("the page follows Magpie language changes and keeps tier multipliers", asyn
   assert.equal(p.el("refreshLabel").textContent, "刷新");
 });
 
+test("a cached-only refresh reports the previous reading in the toolbar", async () => {
+  const state = baseState();
+  const p = page(state, "zh-CN", async (cmd) => ({
+    ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: "已沿用近期额度" }
+  }));
+  await p.clickRefresh();
+  await new Promise(setImmediate);
+  assert.equal(p.el("refreshLabel").textContent, "已沿用近期额度");
+  p.setLanguage("en-US");
+  assert.equal(p.el("refreshLabel").textContent, "Showing recent quotas");
+});
+
 test("live and saved plan names share short labels in both languages", () => {
   const state = baseState();
   const row = { email: "saved@example.test", isEligible: true, plan: "Google AI Pro", planFromLoginRecord: true };

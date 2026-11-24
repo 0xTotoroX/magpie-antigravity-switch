@@ -100,7 +100,9 @@ export async function fixture(options = {}) {
     spawn() { throw new Error("Unexpected spawn blocked"); }
   };
   if (options.desktopInstalled) dirs.add("/Applications/Antigravity.app/Contents/Resources/bin/language_server");
-  const context = vm.createContext({ Buffer, console, URL, process: { pid: 5555, execPath: process.execPath, argv: [], platform: "darwin", env: options.env || {} } });
+  const context = vm.createContext({ Buffer, console, URL,
+    setTimeout(fn, ms) { options.onWait?.(ms); return setImmediate(fn); },
+    process: { pid: 5555, execPath: process.execPath, argv: [], platform: "darwin", env: options.env || {} } });
   const dependencies = {
     "node:fs": { default: mockFs }, "node:path": { default: path },
     "node:os": { default: { homedir: () => "/fixture-only" } },

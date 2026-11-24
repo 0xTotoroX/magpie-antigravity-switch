@@ -51,7 +51,9 @@
     }
     // 保留后台给出的桌面端实际状态，只去掉本行已有的账号名。
     const prefix = `已保存登录 · ${cmd.email} · `;
-    const status = !warning && cmd.type === "switch" && detail.startsWith(prefix) ? detail.slice(prefix.length) : "";
+    let status = "";
+    if (!warning && cmd.type === "refresh") status = result.pageMessage || "";
+    if (!warning && cmd.type === "switch" && detail.startsWith(prefix)) status = detail.slice(prefix.length);
     feedback = { cmd, label, status, detail, warning };
     clearTimeout(feedbackTimer);
     if (!warning) feedbackTimer = setTimeout(() => { feedback = null; render(currentState); }, 4500);
@@ -290,7 +292,8 @@
     btnRefresh.disabled = Boolean(pendingCommand);
     btnRefresh.setAttribute("aria-busy", String(refreshing));
     const refreshResult = feedback?.cmd.type === "refresh" && feedback;
-    document.getElementById("refreshLabel").textContent = t(refreshing ? "refreshing" : refreshResult && !refreshResult.warning ? "refreshed" : "refresh");
+    document.getElementById("refreshLabel").textContent = refreshing ? t("refreshing")
+      : refreshResult && !refreshResult.warning ? feedbackLabel() : t("refresh");
     document.getElementById("btnGitHubStar").disabled = Boolean(pendingCommand);
 
     const error = state?.error || readError || (feedback?.cmd.type === "open-github" && feedback.warning && feedback.detail);

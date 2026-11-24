@@ -692,6 +692,8 @@ test("Magpie refresh keeps exact provider quotas, honors cache age and preserves
   assert.equal(f.calls.slice(callsBefore).some((call) => call.cmd === "magpie"), false);
 
   f.options.refreshQuota = () => ({ cards: [card], stderr: "read 6s ago: not asked again before 30s have passed" });
+  await f.core.executeCommandAsync({ type: "refresh", id: "cached-only", ts: Date.now() });
+  assert.equal(f.core.syncStateFile().lastSwitch.pageMessage, "已沿用近期额度");
   const limited = await refresh(true);
   assert.equal(limited.refreshed, 0);
   assert.match(limited.message, /沿用 1 个账号的近期额度/);
@@ -720,6 +722,39 @@ test("Magpie refresh keeps exact provider quotas, honors cache age and preserves
   assert.equal(failed.state.accounts[0].quota.pools.length, 2);
   assert.match(failed.state.accounts[0].quota.refreshError, /timed out/);
   assert.equal(failed.state.accounts[0].quota.updatedAt, readAt);
+  const retryAt = f.read(f.core.PATHS.cliQuotaCache).accounts[email].retryAfter;
+  nowMs = retryAt - 1;
+  assert.equal((await refresh()).skipped, 1);
+  nowMs = retryAt;
+  f.options.refreshQuota = () => ({ cards: [card] });
+  assert.equal((await refresh()).refreshed, 1);
+});
+
+test("manual refresh retries only timed-out accounts after the host cooldown", async () => {
+  let now = Date.now();
+  const waits = [];
+  const f = await fixture({ onWait(ms) { waits.push(ms); now += ms; } });
+  const users = ["slow@example.test", "ready@example.test", "expired@example.test", "network@example.test"];
+  f.write(f.core.PATHS.loginsJson, users.map((user, i) => ({ agent: "plugin:agy-cli", home: "agy-cli/" + i, user, on: true })));
+  f.write(f.core.PATHS.pluginAuthJson, Object.fromEntries(users.map((email, i) => ["agy-cli/" + i, { metadata: { email } }])));
+  const calls = [];
+  f.options.refreshQuota = (args) => {
+    const user = args[3];
+    calls.push(user);
+    const card = { provider: "agy-cli", user };
+    if (user === users[2]) card.error = "not signed in";
+    else if (user === users[0] && calls.filter(value => value === user).length === 1) card.error = "agy usage query timed out.";
+    else if (user === users[3] && calls.filter(value => value === user).length === 1) card.error = "agy's stored sign-in couldn't be renewed. Check the network or proxy.";
+    else Object.assign(card, { readAt: new Date(now).toISOString(), windows: [{ pool: "Gemini", name: "7 days", used: 42 }] });
+    return { cards: [card] };
+  };
+  const result = await f.core.refreshCliAccounts({ force: true, now: () => now });
+  assert.deepEqual(calls, [...users, users[0], users[3]]);
+  assert.deepEqual(waits, [31_000]);
+  assert.equal(result.refreshed, 3);
+  assert.equal(result.failed, 1);
+  assert.equal(result.errors[0].email, users[2]);
+  assert.equal(f.read(f.core.PATHS.cliQuotaCache).accounts[users[0]].quota.readAt, new Date(now).toISOString());
 });
 
 test("corrupt cliQuotaCache file is preserved without overwriting", async () => {
