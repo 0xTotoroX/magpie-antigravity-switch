@@ -22,6 +22,7 @@ macOS 上的 Magpie 页面插件与 CLI，使用 JavaScript ES modules、Node.js
 - 套餐与配额通过 Magpie 的 `quota refresh agy-cli` 与本地配额缓存读取；不使用旧保险库的 `plan` / `liveQuota` 分类或补额度。旧资料保留。同池推荐分数取各有效窗口的最小剩余量，缺失与过期读数不补满。
 - 页面按会员、免费与套餐未知分组，不可用账号默认折叠。额度从左到右展示 Gemini、按需出现的 Carbon 和 GPT / Claude；常规窗口为 5h、7d，Gemini 4 Carbon 仅展示有有效独立读数的窗口。Argon 旧数据不计入配额投影和推荐。缺失保留列位，视觉用「—」，辅助技术仍读为未知。页面简写已知套餐名并保留 Ultra 倍数，agy-cli 缺失套餐名时可按邮箱使用 Magpie 保存的 Antigravity 登录套餐；明确识别 Pro、Ultra 和 Enterprise，只有已识别免费套餐计入免费版。未知名称不自动纳管。`isPro`、`counts.pro` 和 `onlyPro` 为旧版本兼容字段，会员判断使用 `isPaid`。
 - `npm test` 是隔离回归验证；真实账号切换与系统授权交互需另外说明实际验证范围。
-- README 和公开 Release 只写用户需要的功能、安装与兼容说明；个人开发、本机版本和验收过程留在私有 Runbook。
+- npm 包的根目录 `README.md` 使用英文，顶部链接到 `docs/README.zh-CN.md`，两份一同打包。安装命令、环境要求和用法写在各自的 README。
+- GitHub Release 正文按 `## 中文`、`## English` 的顺序写同一组更新，安装说明放在 README。个人开发、本机版本和验收过程留在私有 Runbook。
 - 源码可能由已安装插件直接使用，修改 `core.mjs` 或 `daemon.mjs` 会触发后台进程自动重载。先在隔离副本验证，再同步。
 - 功能修复先更新本机实际使用的插件并检查 Magpie 页面生效，再考虑远端发布。保留插件标识、选项及登录账号；本地开发版用开发版本标识，不把源码 commit 当作已安装或已发布。
