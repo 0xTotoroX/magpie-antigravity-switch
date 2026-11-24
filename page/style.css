@@ -598,11 +598,10 @@ body {
 
 .quota-reset {
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
   white-space: nowrap;
 }
-
-.reset-short { display: none; }
 
 .quota-cell:not(.is-low, :hover, :focus) .quota-reset {
   visibility: hidden;
@@ -730,11 +729,9 @@ summary:focus-visible {
   }
 
   .quota-cell.is-unknown .quota-bar,
-  .quota-fill,
-  .reset-long { display: none; }
+  .quota-fill { display: none; }
 
-  .reset-short { display: inline; }
-  .quota-cell .quota-reset { grid-row: 3; }
+  .quota-cell .quota-reset { grid-row: 3; font-size: 11px; }
   .quota-cell:not(.is-low, :hover, :focus) .quota-reset { visibility: visible; }
 }
 

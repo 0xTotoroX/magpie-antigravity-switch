@@ -991,6 +991,49 @@ test("quota scans prioritize CLI, share calls, publish completed accounts and re
   assert.equal(f.read(f.core.PATHS.cliQuotaCache).accounts[users[2]].fetchedAt, "2026-01-10T10:00:00Z");
 });
 
+test("a cache write failure waits for the other started quota read to finish", async () => {
+  const f = await fixture();
+  const { cliQuotaCache, loginsJson, pluginAuthJson } = f.core.PATHS;
+  const first = "first@example.test", second = "second@example.test";
+  const users = [first, second];
+  f.write(pluginAuthJson, Object.fromEntries(users.map(email => [email, { metadata: { email } }])));
+  f.write(loginsJson, users.map(user => ({ agent: "plugin:agy-cli", home: user, user, on: true })));
+  const reply = user => ({ cards: [{ provider: "agy-cli", user,
+    windows: [{ pool: "Gemini", name: "7 days", used: 32 }] }] });
+  let finishSecond;
+  f.options.refreshQuota = args => args[3] === first
+    ? reply(first) : new Promise(resolve => { finishSecond = () => resolve(reply(second)); });
+  f.renameErrors.set(cliQuotaCache, "EIO");
+  let settled = false;
+  const batch = f.core.refreshCliAccounts({ force: true });
+  const failure = assert.rejects(batch, /fixture rename denied/).then(() => { settled = true; });
+  await new Promise(setImmediate);
+  assert.equal(settled, false);
+  f.renameErrors.delete(cliQuotaCache);
+  finishSecond();
+  await failure;
+  assert.equal(f.read(cliQuotaCache).accounts[second].quota.windows[0].used, 32);
+});
+
+test("re-adding an account under a new agy home drops the old home's quota error and eligibility", async () => {
+  const f = await fixture();
+  const { cliQuotaCache, loginsJson, pluginAuthJson } = f.core.PATHS;
+  const email = "again@example.test", oldHome = "agy-cli#old", newHome = "agy-cli#new";
+  f.write(pluginAuthJson, { [oldHome]: { metadata: { email } }, [newHome]: { metadata: { email } } });
+  f.write(loginsJson, [
+    { agent: "plugin:agy-cli", home: oldHome, user: email, on: false },
+    { agent: "plugin:agy-cli", home: newHome, user: email, on: true }
+  ]);
+  const stale = { providerHome: oldHome, eligible: false, manualRetryAt: Date.now() + 60_000, refreshError: "context deadline exceeded",
+    quota: { plan: "Google AI Pro", windows: [{ pool: "Gemini", name: "7 days", used: 32 }] } };
+  f.write(cliQuotaCache, { accounts: { [email]: stale } });
+  const [account] = f.core.syncStateFile().accounts;
+  assert.equal(account.email, email);
+  assert.equal(account.isEligible, true);
+  assert.equal(account.quota, null);
+  assert.equal(f.read(cliQuotaCache).accounts[email].providerHome, oldHome);
+});
+
 test("deferred retries survive the first pass and only retry still-enabled failed logins once", async () => {
   const f = await fixture();
   const users = ["retry@example.test", "removed@example.test", "healthy@example.test"];

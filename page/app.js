@@ -106,7 +106,7 @@
       <span class="quota-bar" style="--remaining:${remaining}%" ${known ? `role="progressbar" aria-label="${label} ${t("remaining")}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${remaining}"` : 'aria-hidden="true"'}>
         <span class="quota-fill"></span>
       </span>
-      ${hasReset ? `<span class="quota-reset"><span class="reset-long">${i18n.reset(minutes)}</span><span class="reset-short">${i18n.reset(minutes, true)}</span></span>` : ""}
+      ${hasReset ? `<span class="quota-reset">${i18n.reset(minutes)}</span>` : ""}
     </div>`;
   }
 

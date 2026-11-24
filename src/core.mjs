@@ -718,9 +718,8 @@ function findCliCacheEntry(cliCache, email) {
   return null;
 }
 
-function resolveQuotaForEmail(email, quotas, cliCache = null, agyCliOnly = false) {
+function resolveQuotaForEmail(email, quotas, cliEntry = null, agyCliOnly = false) {
   const candidates = [];
-  const cliEntry = findCliCacheEntry(cliCache, email);
   if (cliEntry) {
     const cliSummary = summarizeQuotaEntry({
       at: cliEntry.fetchedAt || null,
@@ -1029,11 +1028,14 @@ function buildState(inputs, agyCliOnly = false) {
       null;
     const pluginCreds = collectPluginCredentialsForEmail(email, matchingLogins, pluginCredentials);
     const vaultEntry = vault.accounts?.[email] || null;
-    const cliCacheEntry = findCliCacheEntry(cliCache, email);
-    const quotaSummary = resolveQuotaForEmail(email, quotas, cliCache, agyCliOnly);
-    if (quotaSummary && cliCacheEntry?.manualRetryAt > 0 &&
-        matchingLogins.some(item => item.on && !item.lapsed && isMagpieAgyCliLogin(item, pluginAuth) &&
-          getLoginHomeKey(item) === cliCacheEntry.providerHome)) {
+    const cached = findCliCacheEntry(cliCache, email);
+    const activeHomes = matchingLogins
+      .filter(item => item.on && !item.lapsed && isMagpieAgyCliLogin(item, pluginAuth))
+      .map(getLoginHomeKey);
+    const matchesActiveHome = activeHomes.includes(cached?.providerHome);
+    const cliCacheEntry = !cached?.providerHome || !activeHomes.length || matchesActiveHome ? cached : null;
+    const quotaSummary = resolveQuotaForEmail(email, quotas, cliCacheEntry, agyCliOnly);
+    if (quotaSummary && matchesActiveHome && cliCacheEntry?.manualRetryAt > 0) {
       quotaSummary.retryPending = true;
     }
 
@@ -1281,7 +1283,7 @@ export function importAccountToMagpie(email) {
   const { vault, pluginCredentials } = captureLiveClientAccounts();
   const cliCache = readCliQuotaCache();
   const quotas = readJsonSafe(PATHS.quotasJson, {});
-  const plan = resolveQuotaForEmail(email, quotas, cliCache)?.plan || null;
+  const plan = resolveQuotaForEmail(email, quotas, findCliCacheEntry(cliCache, email))?.plan || null;
   const vaultEntry = vault.accounts?.[email] || null;
   const pluginCreds = collectPluginCredentialsForEmail(email, [], pluginCredentials);
   const pluginWithToken = pluginCreds.find((cred) => cred?.auth?.refresh_token) || null;
@@ -1389,7 +1391,7 @@ export function organizeAccounts({ onlyPro } = {}) {
     // 1. Ensure all recognized paid accounts are imported into Magpie logins.json
     for (const [email, vEntry] of Object.entries(vault.accounts || {})) {
       if (!vEntry?.auth?.refresh_token) continue;
-      const plan = resolveQuotaForEmail(email, quotas, cliCache)?.plan;
+      const plan = resolveQuotaForEmail(email, quotas, findCliCacheEntry(cliCache, email))?.plan;
       if (!describePlan(plan).isPaid) continue;
       const exists = logins.some(
         (item) => item && isSupportedLoginAgent(item.agent) && resolveLoginItemEmail(item, pluginCredentials) === email
@@ -1429,7 +1431,7 @@ export function organizeAccounts({ onlyPro } = {}) {
         }
         continue;
       }
-      const plan = resolveQuotaForEmail(email, quotas, cliCache)?.plan || item.plan || null;
+      const plan = resolveQuotaForEmail(email, quotas, findCliCacheEntry(cliCache, email))?.plan || item.plan || null;
       if (plan) {
         item.plan = plan;
       }
@@ -1449,8 +1451,8 @@ export function organizeAccounts({ onlyPro } = {}) {
     agyItems.sort((a, b) => {
       const aEmail = resolveLoginItemEmail(a, pluginCredentials);
       const bEmail = resolveLoginItemEmail(b, pluginCredentials);
-      const aPlan = a.plan || resolveQuotaForEmail(aEmail, quotas, cliCache)?.plan || null;
-      const bPlan = b.plan || resolveQuotaForEmail(bEmail, quotas, cliCache)?.plan || null;
+      const aPlan = a.plan || resolveQuotaForEmail(aEmail, quotas, findCliCacheEntry(cliCache, aEmail))?.plan || null;
+      const bPlan = b.plan || resolveQuotaForEmail(bEmail, quotas, findCliCacheEntry(cliCache, bEmail))?.plan || null;
       const aPaid = describePlan(aPlan).isPaid;
       const bPaid = describePlan(bPlan).isPaid;
       if (aPaid !== bPaid) return aPaid ? -1 : 1;
@@ -2112,7 +2114,11 @@ export async function refreshCliAccounts({ force = false, now = Date.now, prefer
   const workers = Array.from({ length: Math.min(jobs.size, retryOnly ? 1 : 2) }, async () => {
     for (const [email, job] of pending) await readAccount(email, job, true);
   });
-  await Promise.all(workers);
+  // Let all started provider reads finish even if one worker cannot write its cache.
+  // The daemon can safely clear refresh state and reload only after they settle.
+  const workersDone = await Promise.allSettled(workers);
+  const failedWorker = workersDone.find(worker => worker.status === "rejected");
+  if (failedWorker) throw failedWorker.reason;
   // Standalone CLI callers wait for retries. The daemon persists their due times instead.
   for (const { email, job, retryAt } of retries) {
     const current = now();

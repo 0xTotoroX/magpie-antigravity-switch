@@ -278,8 +278,11 @@ test("the page follows Magpie language changes and keeps tier multipliers", asyn
   state.accounts = [{
     email: "member@example.test", plan: "Google AI Ultra (20x)", isEligible: true, isPaid: true,
     hasCredentials: true, activeMagpieFirst: true,
-    quota: { pools: [{ pool: "Gemini", window: "5 hours", remaining: 75,
-      resetsAt: new Date(Date.now()+7200_000).toISOString() }] }
+    quota: { pools: [
+      { pool: "Gemini", window: "5 hours", remaining: 8, resetsAt: new Date(Date.now() + 32 * 60_000).toISOString() },
+      { pool: "Gemini", window: "7 days", remaining: 75, resetsAt: new Date(Date.now() + (6 * 60 + 32) * 60_000).toISOString() },
+      { pool: "Claude & GPT", window: "7 days", remaining: 75, resetsAt: new Date(Date.now() + (6 * 24 + 4) * 3600_000).toISOString() }
+    ] }
   }];
   const p = page(state, "en-US", async (cmd) => ({ ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: "已刷新" } }));
   assert.equal(p.el("refreshLabel").textContent, "Refresh");
@@ -287,10 +290,9 @@ test("the page follows Magpie language changes and keeps tier multipliers", asyn
   assert.match(html, /Paid accounts/);
   assert.match(html, /Magpie preferred/);
   assert.match(html, />Ultra \(20x\)</);
-  assert.match(html, /Gemini 5h: 75%/);
+  assert.match(html, /Gemini 5h: 8%/);
   assert.match(html, /Reset time: /);
-  assert.match(html, />in 2h</);
-  assert.match(html, />2h</);
+  for (const value of ["32min", "6h32min", "6d4h"]) assert.ok(html.includes(`>${value}</span>`));
   assert.match(html, /CLI only/);
   assert.doesNotMatch(html, /\p{Script=Han}/u);
 
@@ -299,7 +301,10 @@ test("the page follows Magpie language changes and keeps tier multipliers", asyn
   assert.equal(p.el("refreshLabel").textContent, "Refreshed");
   p.setLanguage("zh-CN");
   assert.equal(p.el("refreshLabel").textContent, "已刷新");
-  assert.match(p.el("accountList").innerHTML, /Magpie 首选/);
+  html = p.el("accountList").innerHTML;
+  assert.match(html, /Magpie 首选/);
+  for (const value of ["32min", "6h32min", "6d4h"]) assert.ok(html.includes(`>${value}</span>`));
+  assert.doesNotMatch(html, /小时后|分后|天后/);
   p.expireToast();
   assert.equal(p.el("refreshLabel").textContent, "刷新");
 });

@@ -173,11 +173,13 @@
     return backendMessages.reduce((result, [pattern, translation]) => result.replace(pattern, translation), message);
   }
 
-  function reset(minutes, compact = false) {
-    const [size, zh, en] = minutes >= 1440 ? [1440, "天", "d"] : minutes >= 60 ? [60, "小时", "h"] : [1, "分", "m"];
-    const value = Math.floor(minutes / size);
-    if (compact) return `${value}${en}`;
-    return lang === "en" ? `in ${value}${en}` : `${value}${zh}后`;
+  function reset(minutes) {
+    const days = Math.floor(minutes / 1440);
+    const hours = Math.floor((minutes % 1440) / 60);
+    const remainder = minutes % 60;
+    const hourText = hours ? `${hours}h` : "";
+    if (days) return `${days}d${hourText}`;
+    return hourText + (remainder || !hours ? `${remainder}min` : "");
   }
 
   const accountCount = (n) => lang === "en" ? `${n} account${n === 1 ? "" : "s"}` : `${n} 个账号`;
