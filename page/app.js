@@ -143,7 +143,8 @@
   }
 
   function systemQuotaReason(error) {
-    if (/^(?:agy usage query timed out\.?|context deadline exceeded|agy 额度查询超时|Magpie 额度刷新超时)$/i.test(error || "")) return t("quotaQueryTimeout");
+    const key = i18n.quotaIssueKey(error);
+    if (key) return t(key);
     if (error === "找不到 Magpie 命令，无法刷新额度") return i18n.backend(error);
     return "";
   }
@@ -172,6 +173,11 @@
     return [reason, previousReading(quota, quotaGroups)].filter(Boolean).join(" · ");
   }
 
+  function sharedHistory(rows) {
+    if (rows.every((row) => row.previous === rows[0].previous)) return rows[0].previous;
+    return rows.some((row) => row.previous) ? t("previousReading") : "";
+  }
+
   function sharedQuotaIssue(accounts, quotaGroups) {
     const groups = new Map();
     for (const { email, quota } of accounts) {
@@ -183,22 +189,29 @@
       groups.get(reason).push({ email, cause: retrying ? i18n.backend(error) : "", previous: previousReading(quota, quotaGroups) });
     }
     if (!groups.size) return null;
-    const summaries = [];
     const details = [];
+    let label;
     for (const [reason, rows] of groups) {
       const all = rows.length === accounts.length;
       const same = rows.every((row) => row.previous === rows[0].previous);
       const scope = all ? "" : i18n.accountCount(rows.length);
-      const history = same ? rows[0].previous : rows.some((row) => row.previous) ? t("previousReading") : "";
-      const summary = [reason, scope, history].filter(Boolean).join(" · ");
-      summaries.push(summary);
+      label = [reason, scope, sharedHistory(rows)].filter(Boolean).join(" · ");
       const affected = rows.map(({ email, cause, previous }) => [email, cause, !same && previous].filter(Boolean).join(" · "));
-      details.push(summary + "\n" + affected.join("\n"));
+      const guidance = reason === t("quotaRenewalFailed") ? [t("quotaRenewalDetail")] : [];
+      details.push([label, ...guidance, ...affected].join("\n"));
     }
     const onlyReason = groups.size === 1 ? groups.keys().next().value : null;
     const retryOnly = onlyReason === t("quotaRetry");
-    const shortLabel = retryOnly ? t("quotaRetry") : onlyReason === t("quotaQueryTimeout") ? t("quotaTimedOut") : t("quotaProblem");
-    return { label: summaries.join(" · "), detail: details.join("\n\n"), retryOnly, shortLabel };
+    const shortLabel = ({
+      [t("quotaRetry")]: t("quotaRetry"),
+      [t("quotaQueryTimeout")]: t("quotaTimedOut"),
+      [t("quotaRenewalFailed")]: t("quotaRenewalShort")
+    })[onlyReason] || t("quotaProblem");
+    if (groups.size > 1) {
+      const rows = [...groups.values()].flat();
+      label = [t("quotaProblem"), i18n.accountCount(rows.length), sharedHistory(rows)].filter(Boolean).join(" · ");
+    }
+    return { label, detail: details.join("\n\n"), retryOnly, shortLabel };
   }
 
   function renderDesktopMark(account) {

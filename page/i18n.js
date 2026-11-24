@@ -59,6 +59,10 @@
     commandTimeout: ["操作暂未返回结果", "The operation has not returned a result yet"],
     quotaQueryTimeout: ["agy 额度查询超时", "The agy quota query timed out"],
     quotaTimedOut: ["额度超时", "Timed out"],
+    quotaRenewalFailed: ["登录续期失败", "Sign-in renewal failed"],
+    quotaRenewalShort: ["续期失败", "Renewal failed"],
+    quotaRenewalDetail: ["agy 暂时无法续期已保存的登录。若持续失败，请检查网络或代理。",
+      "agy could not renew the saved sign-in. If this persists, check the network or proxy."],
     commandFailed: ["指令发送失败", "Could not send the command"]
   };
 
@@ -149,11 +153,22 @@
     }
   }
 
+  function quotaIssueKey(value) {
+    const message = String(value ?? "").trim();
+    if (/^(?:agy usage query timed out\.?|context deadline exceeded|agy 额度查询超时|Magpie 额度刷新超时)$/i.test(message)) {
+      return "quotaQueryTimeout";
+    }
+    if (message === "agy's stored sign-in couldn't be renewed. Check the network or proxy.") {
+      return "quotaRenewalFailed";
+    }
+    return null;
+  }
+
   function backend(value) {
     const message = String(value ?? "");
-    if (/^(?:agy usage query timed out\.?|context deadline exceeded)$/i.test(message.trim())) {
-      return text("quotaQueryTimeout");
-    }
+    const issue = quotaIssueKey(message);
+    if (issue === "quotaRenewalFailed") return text("quotaRenewalDetail");
+    if (issue) return text(issue);
     if (lang !== "en") return message;
     return backendMessages.reduce((result, [pattern, translation]) => result.replace(pattern, translation), message);
   }
@@ -173,7 +188,7 @@
   };
 
   globalThis.agySwitchI18n = {
-    setLanguage, apply, text, backend, reset, accountCount, stateLabel, locale: () => lang,
+    setLanguage, apply, text, backend, quotaIssueKey, reset, accountCount, stateLabel, locale: () => lang,
     separator: () => lang === "en" ? ": " : "："
   };
 })();

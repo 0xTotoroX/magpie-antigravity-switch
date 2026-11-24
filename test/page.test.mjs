@@ -49,6 +49,7 @@ function page(state, language = "zh-CN", send) {
     clickSaved: () => click({ target: new Element('[data-action="saved-login-detail"]') }),
     clickFeedback: () => click({ target: new Element('[data-action="feedback-detail"]') }),
     clickRefresh: () => click({ target: new Element("#btnRefresh") }),
+    clickQuotaStatus: () => click({ target: new Element("#quotaStatus") }),
     clickCliToggle: () => click({ target: new Element("#btnToggleCli") }),
     clickSwitch: (email, action = "switch-all") => click({ target: new Element("[data-action]", { "data-action": action, "data-email": email }) }),
     expireToast: () => toastTimer?.()
@@ -539,6 +540,37 @@ test("shared failures with different histories list each date in details and rec
   p.render({ ...state, accounts: state.accounts.slice(2) });
   assert.equal(p.el("quotaStatus").hidden, true);
   assert.match(p.el("accountList").innerHTML, />1 个账号</);
+});
+
+test("sign-in renewal failures stay in the toolbar with a localized cause and cached quota", () => {
+  const renewal = "agy's stored sign-in couldn't be renewed. Check the network or proxy.";
+  const row = (email, refreshError) => ({ email, isEligible: true, hasCredentials: true, quota: {
+    refreshError, updatedAt: "2026-11-24T17:17:00+08:00",
+    pools: [{ pool: "Gemini", window: "7 days", remaining: 66 }]
+  } });
+  const account = row("renew@example.test", renewal);
+  const state = { ...baseState(), accounts: [account, row("slow@example.test", "context deadline exceeded")] };
+  const p = page(state);
+  const status = p.el("quotaStatus");
+  const list = p.el("accountList");
+  assert.match(status.innerHTML, /额度异常 · 2 个账号 · 上次数据/);
+  assert.doesNotMatch(list.innerHTML, /stored sign-in|续期失败|查询超时/);
+  const rendered = accountRow(list.innerHTML, account.email);
+  assert.match(rendered, />66%<\/strong>/);
+  assert.match(rendered, /data-action="switch-all"/);
+  p.clickQuotaStatus();
+  const detail = p.el("feedbackBody").textContent;
+  assert.match(detail, /登录续期失败/);
+  assert.match(detail, /续期已保存的登录.*检查网络或代理/);
+  assert.match(detail, /renew@example.test/);
+  assert.match(detail, /slow@example.test/);
+  assert.doesNotMatch(detail, /重新登录|stored sign-in/);
+  p.render({ ...state, accounts: [account] });
+  assert.match(status.innerHTML, /issue-long">登录续期失败/);
+  assert.match(status.innerHTML, /issue-short">续期失败/);
+  p.setLanguage("en");
+  assert.match(status.title, /Sign-in renewal failed/);
+  assert.match(status.title, /network or proxy/);
 });
 
 test("quota progress and account switching stay independent when their responses overlap", async () => {
