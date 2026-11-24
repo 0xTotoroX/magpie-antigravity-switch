@@ -10,7 +10,6 @@ test("the local page reads its projection and submits refresh and switch without
   const pageDir = await fs.mkdtemp(path.join(os.tmpdir(), "agy-page-"));
   const connection = path.join(pageDir, ".runtime/connection.js");
   const preferenceFile = path.join(pageDir, "preference.json");
-  await fs.writeFile(preferenceFile, JSON.stringify({ hideCliAction: true }), { mode: 0o600 });
   const received = [];
   const state = { accounts: [{ email: "member@example.test" }] };
   const stop = startPageService({ pageDir, preferenceFile, port: 0, getState: () => state,

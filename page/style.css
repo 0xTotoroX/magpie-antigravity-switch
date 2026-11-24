@@ -102,10 +102,15 @@ body {
   transition: color 0.15s ease, background-color 0.15s ease;
 }
 
-.support-link svg {
-  width: 12px;
-  height: 12px;
-  flex-shrink: 0;
+.toolbar-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .support-link:hover:not(:disabled) {
@@ -151,9 +156,10 @@ body {
   font-weight: 600;
 }
 
-.cli-toggle-slash { display: none; }
+.cli-toggle-eye-off { display: none; }
 #btnToggleCli[aria-pressed="false"] { color: var(--muted); }
-#btnToggleCli[aria-pressed="false"] .cli-toggle-slash { display: block; }
+#btnToggleCli[aria-pressed="false"] .cli-toggle-eye { display: none; }
+#btnToggleCli[aria-pressed="false"] .cli-toggle-eye-off { display: initial; }
 
 #btnRefresh {
   display: inline-flex;
@@ -161,21 +167,17 @@ body {
   justify-content: center;
   flex: 1;
   min-width: 0;
-  gap: 6px;
+  gap: 5px;
 }
 
 #refreshLabel { overflow: hidden; text-overflow: ellipsis; }
-
-.refresh-icon {
-  flex: none;
-}
 
 #btnRefresh[aria-busy="true"] {
   opacity: 1;
   color: var(--primary);
 }
 
-#btnRefresh[aria-busy="true"] .refresh-icon {
+#btnRefresh[aria-busy="true"] .toolbar-icon {
   animation: refresh-spin 0.9s linear infinite;
 }
 
@@ -184,7 +186,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #btnRefresh[aria-busy="true"] .refresh-icon {
+  #btnRefresh[aria-busy="true"] .toolbar-icon {
     animation: none;
   }
 }
@@ -822,15 +824,15 @@ summary:focus-visible {
   .quota-status { text-align: end; }
   .issue-long { display: none; }
   .issue-short { display: inline; }
-  .topbar { grid-template-columns: minmax(0, max-content) minmax(0, 1fr) calc(7.2em + 32px); }
+  .topbar { grid-template-columns: minmax(0, max-content) minmax(0, 1fr) calc(7.2em + 48px); }
   .title-row { flex-wrap: nowrap; }
   .title-block h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .support-link { flex: none; }
-  .cli-toggle-label { display: none; }
 }
 
 @media (max-width: 440px) {
-  .topbar { grid-template-columns: minmax(0, 1fr) 4.7em calc(7.2em + 32px); gap: 5px; }
+  .topbar { grid-template-columns: minmax(0, 1fr) auto calc(7.2em + 48px); gap: 5px; }
+  .quota-status { max-width: 4.7em; }
   .title-row { gap: 4px; }
   .support-link { padding: 4px; }
   .support-link span { display: none; }

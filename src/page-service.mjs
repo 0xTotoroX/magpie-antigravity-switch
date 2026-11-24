@@ -32,11 +32,11 @@ export function startPageService({ pageDir, preferenceFile, port, getState, subm
   const ready = path.join(runtime, "connection.js");
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   const key = randomBytes(32).toString("hex");
-  let hideCliAction = false;
+  let hideCliAction = true;
   try {
-    hideCliAction = JSON.parse(fs.readFileSync(preferenceFile, "utf8"))?.hideCliAction === true;
+    hideCliAction = JSON.parse(fs.readFileSync(preferenceFile, "utf8"))?.hideCliAction !== false;
   } catch {
-    // 首次打开或偏好无法读取时默认显示。
+    // 首次打开或偏好无法读取时默认收起。
   }
   const withPreference = state => state && { ...state, hideCliAction };
   const publish = (connection) => {

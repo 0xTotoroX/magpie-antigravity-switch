@@ -16,7 +16,7 @@
   const t = i18n.text;
 
   let currentState = globalThis.__AGY_SWITCH_STATE__ || null;
-  let cliActionsHidden = currentState?.hideCliAction === true;
+  let cliActionsHidden = currentState?.hideCliAction !== false;
   let cliVisibilityLoaded = typeof currentState?.hideCliAction === "boolean";
   let savingCliVisibility = false;
   let pendingCommand;
@@ -253,7 +253,7 @@
         <div class="account-main">
           <div class="account-title-line">
             <span class="account-email" title="${escapeHtml(account.email)}">${escapeHtml(account.email)}</span>${renderDesktopMark(account)}
-            ${account.activeCli ? `<span class="tag tag-cli" title="${t("cliNext")}">CLI</span>` : ""}
+            ${account.activeCli && !cliActionsHidden ? `<span class="tag tag-cli" title="${t("cliNext")}">CLI</span>` : ""}
           </div>
           <div class="account-tags"><span class="tag ${tierClass}">${escapeHtml(tierLabel)}</span>${magpieTag}</div>
           ${quotaIssue ? `<span class="account-issue">${escapeHtml(quotaIssue)}</span>` : ""}

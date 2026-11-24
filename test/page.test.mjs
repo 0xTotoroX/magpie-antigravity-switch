@@ -54,7 +54,7 @@ function page(state, language = "zh-CN", send) {
     expireToast: () => toastTimer?.()
   };
 }
-const baseState = () => ({ current: {}, counts: { pro: 0, free: 0, unknown: 0, ineligible: 0 }, accounts: [], preferences: { onlyPro: false } });
+const baseState = () => ({ current: {}, hideCliAction: false, counts: { pro: 0, free: 0, unknown: 0, ineligible: 0 }, accounts: [], preferences: { onlyPro: false } });
 
 function accountRow(html, email) {
   return html.split('<div class="account-row">').find((row) => row.startsWith("\n") && row.includes(`title="${email}">${email}</span>`)) || "";
@@ -116,32 +116,34 @@ test("the CLI-only control describes the shared login for recent local agy", () 
   assert.match(page(state).el("accountList").innerHTML, /title="新启动的 CLI 和桌面端共用此登录"/);
 });
 
-test("the CLI visibility toggle remembers its choice and preserves the current CLI tag", async () => {
+test("CLI actions and tags start hidden and reopen in the last selected state", async () => {
   const email = "cli@example.test";
-  const state = { ...baseState(), accounts: [{ email, activeCli: true, isEligible: true, hasCredentials: true }] };
+  const state = { ...baseState(), hideCliAction: undefined, accounts: [{ email, activeCli: true, isEligible: true, hasCredentials: true }] };
   const setVisibility = async cmd => {
     assert.equal(cmd.type, "set-cli-visibility");
     state.hideCliAction = cmd.hidden;
     return { hideCliAction: cmd.hidden };
   };
   const p = page(state, "zh", setVisibility);
-  assert.equal(p.el("btnToggleCli").getAttribute("aria-pressed"), "true");
-  p.clickCliToggle();
-  await new Promise(setImmediate);
   assert.equal(p.el("btnToggleCli").getAttribute("aria-pressed"), "false");
-  assert.equal(p.el("btnToggleCli").title, "显示「仅 CLI」按钮");
+  assert.equal(p.el("btnToggleCli").title, "显示 CLI 标签和操作");
   assert(p.el("switchPage").classList.contains("hide-cli-actions"));
   const row = accountRow(p.el("accountList").innerHTML, email);
   assert.doesNotMatch(row, /data-action="switch-cli"/);
   assert.match(row, /data-action="switch-all"/);
-  assert.match(row, /tag tag-cli" title="[^"]+">CLI</);
+  assert.doesNotMatch(row, /tag tag-cli/);
+  p.clickCliToggle();
+  await new Promise(setImmediate);
+  assert.equal(p.el("btnToggleCli").getAttribute("aria-pressed"), "true");
+  assert.match(p.el("accountList").innerHTML, /tag tag-cli" title="[^"]+">CLI</);
+  assert.match(p.el("accountList").innerHTML, /data-action="switch-cli"/);
   const reopened = page(state, "en", setVisibility);
-  assert.equal(reopened.el("btnToggleCli").getAttribute("aria-pressed"), "false");
-  assert.equal(reopened.el("btnToggleCli").title, "Show CLI-only buttons");
+  assert.equal(reopened.el("btnToggleCli").getAttribute("aria-pressed"), "true");
+  assert.equal(reopened.el("btnToggleCli").title, "Hide CLI tags and actions");
   reopened.clickCliToggle();
   await new Promise(setImmediate);
-  assert.match(reopened.el("accountList").innerHTML, /data-action="switch-cli"/);
-  assert.equal(page(state, "zh").el("btnToggleCli").getAttribute("aria-pressed"), "true");
+  assert.doesNotMatch(reopened.el("accountList").innerHTML, /data-action="switch-cli"|tag tag-cli/);
+  assert.equal(page(state, "zh").el("btnToggleCli").getAttribute("aria-pressed"), "false");
 });
 
 test("#8 page does not describe an unknown quota or plan as normal or free", () => {
