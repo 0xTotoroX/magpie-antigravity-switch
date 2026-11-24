@@ -1,13 +1,13 @@
 /**
  * [INPUT]: 本机页面服务的账号快照、i18n.js 文案与 Magpie 页面桥接。
- * [OUTPUT]: GPT / Claude 与 Gemini 共享额度、套餐来源、登录状态和操作反馈。
+ * [OUTPUT]: Gemini 与 GPT / Claude 共享额度、套餐简称、登录状态和操作反馈。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
 (() => {
   const QUOTA_GROUPS = [
-    { pool: "Claude & GPT", label: "GPT / Claude", windows: ["5 hours", "7 days"] },
-    { pool: "Gemini", label: "Gemini", windows: ["5 hours", "7 days"] }
+    { pool: "Gemini", label: "Gemini", windows: ["5 hours", "7 days"] },
+    { pool: "Claude & GPT", label: "GPT / Claude", windows: ["5 hours", "7 days"] }
   ];
 
   const CARBON_GROUP = { pool: "Gemini 4 Carbon", label: "Gemini 4 Carbon", windows: ["5 hours", "7 days"] };
@@ -20,6 +20,7 @@
   let pendingCommandType = null;
   let lastToast = "";
   let toastTimer;
+  let visibleListMarkup;
 
   function escapeHtml(str) {
     return String(str ?? "")
@@ -59,10 +60,9 @@
     return window === "5 hours" ? "5h" : "7d";
   }
 
-  function resetLabel(resetsAt) {
-    const minutes = Math.ceil((Date.parse(resetsAt) - Date.now()) / 60000);
-    if (!Number.isFinite(minutes) || minutes <= 0) return "";
-    return i18n.reset(minutes);
+  function shortPlan(label) {
+    if (/^Antigravity Starter Quota$/i.test(label)) return "Starter";
+    return label.replace(/^(?:Google AI|Antigravity) (?=(?:Pro|Ultra|Enterprise)\b)/i, "");
   }
 
   function isStale(reading) {
@@ -79,13 +79,16 @@
     const value = known ? `${remaining}%` : stale ? t("quotaWait") : "—";
     const accessibleValue = known || stale ? value : t("unknown");
     const label = `${group.label} ${period}`;
-    return `<div class="quota-cell ${known ? fillClass(remaining) : "is-unknown"}" data-pool="${group.pool}" data-window="${window}">
+    const minutes = Math.ceil((resetAt - Date.now()) / 60000);
+    const hasReset = known && minutes > 0;
+    const resetTitle = hasReset ? escapeHtml(`${t("resetTime")}${i18n.separator()}${new Date(resetAt).toLocaleString(i18n.locale())}`) : "";
+    return `<div class="quota-cell ${known ? fillClass(remaining) : stale ? "is-unknown is-stale" : "is-unknown"}" data-pool="${group.pool}" data-window="${window}" ${hasReset ? `tabindex="0" title="${resetTitle}"` : ""}>
       <span class="quota-period">${period}</span>
       <strong class="quota-value" aria-label="${label}${i18n.separator()}${accessibleValue}">${value}</strong>
-      <span class="quota-bar" ${known ? `role="progressbar" aria-label="${label} ${t("remaining")}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${remaining}"` : 'aria-hidden="true"'}>
-        <span class="quota-fill" style="width:${known ? remaining : 0}%"></span>
+      <span class="quota-bar" style="--remaining:${remaining}%" ${known ? `role="progressbar" aria-label="${label} ${t("remaining")}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${remaining}"` : 'aria-hidden="true"'}>
+        <span class="quota-fill"></span>
       </span>
-      <span class="quota-reset" title="${known && Number.isFinite(resetAt) ? escapeHtml(`${t("resetTime")}${i18n.separator()}${new Date(resetAt).toLocaleString(i18n.locale())}`) : ""}">${known ? resetLabel(reading.resetsAt) : ""}</span>
+      ${hasReset ? `<span class="quota-reset"><span class="reset-long">${i18n.reset(minutes)}</span><span class="reset-short">${i18n.reset(minutes, true)}</span></span>` : ""}
     </div>`;
   }
 
@@ -104,7 +107,7 @@
     }
     const pools = account.quota?.error ? [] : account.quota?.pools || [];
     return `<div ${quotaGridAttributes(quotaGroups)} aria-label="${t("quota")}">
-      ${quotaGroups.map((group) => `<div class="quota-group">
+      ${quotaGroups.map((group) => `<div class="quota-group"${group.pool === CARBON_GROUP.pool ? " data-optional" : ""}>
         <span class="quota-group-label">${group.label}</span>
         <div class="quota-windows ${group.windows.length === 1 ? "is-single" : ""}">
           ${group.windows.map((window) => renderQuotaCell(group, window, pools)).join("")}
@@ -146,18 +149,12 @@
     const desktopSavedOffline = account.savedDesktop && currentState?.current?.desktopStatus === "stopped";
     const statusTags = [
       account.activeDesktop ? t("desktop") : desktopSavedOffline ? t("desktopSaved") : null,
-      account.activeCli ? "CLI" : null,
-      account.activeMagpieFirst ? t("magpiePreferred") : null,
-      account.pendingDesktop ? t("desktopPending") : null
+      account.activeMagpieFirst ? t("magpiePreferred") : null
     ].filter(Boolean).map((label) => `<span class="tag tag-active">${label}</span>`).join("");
 
     const isPaid = account.isPaid ?? account.isPro;
     const tierClass = !account.isEligible ? "tag-bad" : isPaid ? "tag-pro" : account.isFree ? "tag-free" : "tag-unknown";
-    const tierLabel = account.isEligible && account.plan
-      ? account.plan
-      : i18n.stateLabel(account.tierLabel) || t(isPaid ? "member" : "planUnknown");
-    const planNote = account.isEligible && account.plan && account.planFromLoginRecord
-      ? " · " + t("lastRecordedPlan") : "";
+    const tierLabel = shortPlan((account.isEligible && account.plan) || i18n.stateLabel(account.tierLabel) || t(isPaid ? "member" : "planUnknown"));
     const quotaIssue = account.isEligible ? quotaNotice(account.quota, quotaGroups) : "";
 
     const canSwitch = account.hasCredentials && account.isEligible;
@@ -179,7 +176,7 @@
           <button type="button" class="btn btn-primary" data-action="switch-all" data-email="${escapeHtml(account.email)}" ${disabled ? "disabled" : ""}>
             ${t("switch")}
           </button>
-          <button type="button" class="btn btn-ghost" data-action="switch-cli" data-email="${escapeHtml(account.email)}" title="${cliSwitchHint}" ${disabled ? "disabled" : ""}>
+          <button type="button" class="btn btn-cli" data-action="switch-cli" data-email="${escapeHtml(account.email)}" title="${cliSwitchHint}" ${disabled ? "disabled" : ""}>
             ${t("cliOnly")}
           </button>
         `;
@@ -191,14 +188,15 @@
         <div class="account-main">
           <div class="account-title-line">
             <span class="account-email">${escapeHtml(account.email)}</span>
-            ${statusTags}
+            ${account.activeCli ? '<span class="cli-status">CLI</span>' : ""}
           </div>
-          <div class="account-tags"><span class="tag ${tierClass}">${escapeHtml(tierLabel + planNote)}</span></div>
+          <div class="account-tags"><span class="tag ${tierClass}">${escapeHtml(tierLabel)}</span>${statusTags}</div>
           ${quotaIssue ? `<span class="account-issue">${escapeHtml(quotaIssue)}</span>` : ""}
         </div>
         ${renderQuotaGrid(account, quotaGroups)}
         <div class="account-actions">
           ${actionButtons}
+          ${account.pendingDesktop ? `<span class="desktop-pending">${t("desktopPending")}</span>` : ""}
         </div>
       </div>
     `;
@@ -210,7 +208,7 @@
         pool.pool === CARBON_GROUP.pool && pool.window === window &&
         Number.isFinite(pool.remaining) && !isStale(pool))));
     const quotaGroups = carbonWindows.length
-      ? [...QUOTA_GROUPS, { ...CARBON_GROUP, windows: carbonWindows }]
+      ? [QUOTA_GROUPS[0], { ...CARBON_GROUP, windows: carbonWindows }, QUOTA_GROUPS[1]]
       : QUOTA_GROUPS;
     const groups = [
       { label: t("members"), matches: (a) => a.isEligible && (a.isPaid ?? a.isPro) },
@@ -245,18 +243,18 @@
     const cur = state.current || {};
 
     const desktopNotice = document.getElementById("desktopNotice");
-    desktopNotice?.classList.toggle("hidden", Boolean(state.error) || cur.desktopStatus !== "unknown");
-
     const allAccounts = Array.isArray(state.accounts) ? state.accounts : [];
     const visibleAccounts = allAccounts.filter((account) => account.isEligible);
+    desktopNotice?.classList.toggle("hidden", Boolean(state.error) || cur.desktopStatus !== "unknown" || visibleAccounts.some((a) => a.pendingDesktop));
     const inactiveAccounts = allAccounts.filter((account) => !account.isEligible);
 
     const listEl = document.getElementById("accountList");
     if (listEl) {
-      if (visibleAccounts.length === 0) {
-        listEl.innerHTML = `<div class="account-empty-state">${t(allAccounts.length ? "noAvailable" : "noAccounts")}</div>`;
-      } else {
-        listEl.innerHTML = renderAccountGroups(visibleAccounts);
+      const markup = visibleAccounts.length ? renderAccountGroups(visibleAccounts)
+        : `<div class="account-empty-state">${t(allAccounts.length ? "noAvailable" : "noAccounts")}</div>`;
+      if (markup !== visibleListMarkup) {
+        listEl.innerHTML = markup;
+        visibleListMarkup = markup;
       }
     }
 

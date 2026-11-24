@@ -8,7 +8,7 @@ View and switch local Antigravity desktop and CLI accounts from Magpie. The page
 
 - Refresh quotas or switch existing accounts while another sign-in is waiting for its authorization code.
 - A failed quota refresh shows the last valid reading with its update time.
-- When agy-cli omits a plan name, the page labels the saved plan for the same account as “Last recorded.”
+- When agy-cli omits a plan name, the page uses the saved plan for the same account.
 - Fixed the white background and control contrast in dark mode, reduced the Refresh button shadow, and simplified the Support action.
 
 ## Install
@@ -33,7 +33,7 @@ You can refresh quotas or switch an existing account while another Magpie sign-i
 
 **Refresh** syncs the agy-cli provider list and asks Magpie to refresh enabled accounts' quotas. Disabled accounts appear under **Unavailable accounts**. A failed refresh shows an error and keeps the previous quota while it remains valid.
 
-The table shows the 5-hour and weekly quotas for GPT / Claude and Gemini. Gemini 4 Carbon appears when a valid separate reading is reported. Missing readings show a dash and expired readings show **Needs refresh**. The plan badge uses the name returned by agy-cli. If the provider omits it, the plugin looks up the saved Antigravity sign-in for the same email and labels the plan **Last recorded**. You can view these records without switching accounts.
+The table shows the 5-hour and weekly quotas for Gemini on the left and GPT / Claude on the right. Narrow views use circular meters and short reset times. Gemini 4 Carbon appears when a valid separate reading is reported. Missing readings show a dash and expired readings show **Needs refresh**. Common plans use short labels such as Pro and Starter. The plan comes from agy-cli. If the provider omits it, the plugin looks up the saved Antigravity sign-in for the same email. You can view these records without switching accounts.
 
 On macOS with local agy 1.5 or later, **CLI only** updates the Keychain sign-in used by new CLI processes and shared with the desktop app. Reconnect an existing CodexHost session to use the new CLI sign-in. A pending desktop change is marked until the running account can be verified.
 

@@ -1,6 +1,6 @@
 /*
  * [INPUT]: Magpie 主题变量与账号分组、五窗口额度页面结构。
- * [OUTPUT]: 深浅模式的不透明页面底色、平面按钮、刷新反馈、账号列表与额度布局。
+ * [OUTPUT]: 深浅模式的不透明页面底色、平面按钮、刷新反馈、账号列表、宽屏额度条与窄屏额度圆盘。
  * [POS]: Antigravity Switch 页面唯一样式入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -51,9 +51,9 @@ body {
 }
 
 .shell {
-  max-width: 1488px;
+  max-width: 1080px;
   margin: 0 auto;
-  padding: 20px 24px 36px;
+  padding: 20px clamp(14px, 2.4vw, 28px) 36px;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -208,6 +208,24 @@ body {
   background: var(--card);
 }
 
+.btn-cli {
+  background: transparent;
+  color: var(--secondary);
+  border-color: transparent;
+  font-weight: 400;
+}
+
+.btn-cli:hover:not(:disabled) {
+  background: var(--bg);
+  border-color: var(--border);
+}
+
+.cli-status,
+.desktop-pending {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .toast {
   padding: 9px 13px;
   border-radius: 9px;
@@ -278,15 +296,15 @@ body {
 .quota-header,
 .account-row {
   display: grid;
-  grid-template-columns: minmax(240px, 1.45fr) minmax(0, 3fr) 144px;
+  grid-template-columns: minmax(198px, 1.25fr) minmax(0, 2.6fr) 124px;
   align-items: center;
-  column-gap: 24px;
+  column-gap: 18px;
   padding: 12px 16px;
 }
 
 .quota-header {
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg) 42%, var(--card));
+  background: transparent;
   color: var(--muted);
   font-size: 12px;
 }
@@ -296,7 +314,7 @@ body {
 }
 
 .quota-header strong {
-  color: var(--text);
+  color: var(--secondary);
   font-size: 12.5px;
   font-weight: 600;
 }
@@ -405,7 +423,7 @@ body {
 }
 
 .account-quotas.has-carbon {
-  grid-template-columns: repeat(2, minmax(0, 2fr)) minmax(0, var(--carbon-width, 1fr));
+  grid-template-columns: minmax(0, 2fr) minmax(0, var(--carbon-width)) minmax(0, 2fr);
 }
 
 .has-carbon .quota-reset {
@@ -461,19 +479,32 @@ body {
 }
 
 .quota-reset {
-  min-height: 17px;
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
 }
 
+.reset-short { display: none; }
+
+.quota-cell:not(.is-low, :hover, :focus) .quota-reset {
+  visibility: hidden;
+}
+
+.quota-cell:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 .quota-bar {
+  --track: color-mix(in srgb, var(--text) 9%, var(--card));
+  --fill: var(--success);
   display: block;
   width: 100%;
   height: 3px;
   overflow: hidden;
   border-radius: 2px;
-  background: color-mix(in srgb, var(--text) 9%, var(--card));
+  background: var(--track);
 }
 
 .quota-cell.is-unknown .quota-bar {
@@ -484,16 +515,17 @@ body {
 .quota-fill {
   display: block;
   height: 100%;
-  border-radius: 2px;
-  background: var(--success);
+  width: var(--remaining);
+  border-radius: inherit;
+  background: var(--fill);
 }
 
-.quota-cell.is-warn .quota-fill {
-  background: var(--warning);
+.quota-cell.is-warn .quota-bar {
+  --fill: var(--warning);
 }
 
-.quota-cell.is-low .quota-fill {
-  background: var(--danger);
+.quota-cell.is-low .quota-bar {
+  --fill: var(--danger);
 }
 
 .account-actions {
@@ -501,6 +533,12 @@ body {
   align-items: center;
   gap: 6px;
   justify-self: end;
+}
+
+.account-actions:has(.desktop-pending) {
+  flex-direction: column;
+  align-items: end;
+  gap: 3px;
 }
 
 .btn:focus-visible,
@@ -518,94 +556,120 @@ summary:focus-visible {
   color: var(--text);
 }
 
-@media (max-width: 1060px) {
+@media (max-width: 980px) {
   .quota-header,
   .account-row {
-    grid-template-columns: minmax(220px, 1.25fr) minmax(0, 3fr) 132px;
-    column-gap: 16px;
+    grid-template-columns: minmax(180px, 1.1fr) minmax(0, 2.6fr) 120px;
+    column-gap: 14px;
     padding: 12px;
   }
 
-  .account-quotas {
-    column-gap: 14px;
-  }
-
-  .account-actions .btn {
-    padding-inline: 10px;
-  }
+  .account-quotas { column-gap: 14px; }
+  .quota-windows { column-gap: 8px; }
+  .quota-cell.is-unknown .quota-value { white-space: normal; }
 }
 
-@media (max-width: 960px) {
-  .quota-header {
-    display: none;
+@media (max-width: 820px) {
+  .quota-cell {
+    display: grid;
+    grid-template-rows: var(--period-track, 0) 38px auto;
+    justify-items: center;
+    align-items: center;
+    justify-self: start;
+    gap: 3px;
+    min-width: 38px;
   }
+
+  .quota-cell .quota-value,
+  .quota-cell .quota-bar { grid-area: 2 / 1; }
+
+  .quota-cell .quota-value {
+    z-index: 1;
+    font-size: 11px;
+  }
+
+  .quota-cell.is-unknown .quota-value {
+    max-width: 60px;
+    text-align: center;
+    line-height: 1.2;
+  }
+
+  .quota-bar {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: conic-gradient(var(--fill) var(--remaining), var(--track) 0);
+    mask-image: radial-gradient(closest-side, transparent calc(100% - 3px), black calc(100% - 2px));
+  }
+
+  .quota-cell.is-unknown .quota-bar,
+  .quota-fill,
+  .reset-long { display: none; }
+
+  .reset-short { display: inline; }
+  .quota-cell .quota-reset { grid-row: 3; }
+  .quota-cell:not(.is-low, :hover, :focus) .quota-reset { visibility: visible; }
+}
+
+@media (max-width: 740px) {
+  .quota-header,
+  .quota-group[data-optional]:not(:has([role="progressbar"], .is-stale)) { display: none; }
+  .quota-cell { --period-track: auto; }
 
   .account-row {
     grid-template-columns: minmax(0, 1fr) auto;
-    row-gap: 16px;
+    row-gap: 12px;
+    padding: 14px 16px;
   }
 
-  .account-main {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .account-actions {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
+  .account-actions { grid-area: 1 / 2; }
   .account-quotas,
-  .account-unavailable {
-    grid-column: 1 / -1;
-    grid-row: 2;
+  .account-unavailable { grid-column: 1 / -1; }
+
+  .account-quotas {
+    display: flex;
+    column-gap: clamp(16px, 4vw, 40px);
   }
+
+  .quota-group { flex: 0 1 160px; }
+  .quota-group:has(.is-single) { flex-basis: 80px; }
 
   .quota-group-label,
   .quota-period {
     display: block;
-    font-size: 12px;
     color: var(--muted);
+    font-size: 12px;
   }
 
-  .quota-group-label {
-    color: var(--text);
-    font-weight: 600;
-    margin-bottom: 4px;
-  }
+  .quota-group-label { font-weight: 600; }
+  .quota-windows { column-gap: 8px; }
+
 }
 
-@media (max-width: 620px) {
-  .shell {
-    padding: 16px 14px 28px;
-  }
-
-  .toolbar {
-    flex-wrap: wrap;
-  }
-
-  .account-row {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 12px;
-  }
-
+@media (max-width: 560px) {
+  .shell { padding: 14px 12px 26px; }
+  .account-row { padding: 12px; }
   .account-quotas,
   .account-quotas.has-carbon {
+    display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px 16px;
+    gap: 10px 16px;
   }
-
-  .account-actions {
-    grid-column: 1;
-    grid-row: 3;
-    justify-self: start;
-  }
-
-  .quota-reset {
-    white-space: normal;
-  }
+  .has-carbon .quota-group:last-child { grid-area: 1 / 2; }
 }
 
+@media (max-width: 440px) {
+  .account-row { grid-template-columns: minmax(0, 1fr); }
+  .account-actions {
+    grid-area: auto;
+    justify-self: start;
+  }
+  .account-actions:has(.desktop-pending) {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .btn,
   .github-star-badge {

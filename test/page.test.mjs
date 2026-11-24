@@ -64,8 +64,8 @@ test("#5 page labels the running desktop and pending login on their own rows", (
   state.recommendedEmail = "next@example.test";
   const p = page(state), html = p.el("accountList").innerHTML;
   assert.match(accountRow(html, "old@example.test"), /tag-active">桌面端</);
-  assert.match(accountRow(html, "next@example.test"), /tag-active">CLI</);
-  assert.match(accountRow(html, "next@example.test"), /tag-active">桌面端待生效</);
+  assert.match(accountRow(html, "next@example.test"), /cli-status">CLI</);
+  assert.match(accountRow(html, "next@example.test"), /desktop-pending">桌面端待生效</);
   assert.match(accountRow(html, "next@example.test"), /应用桌面端/);
   assert.doesNotMatch(accountRow(html, "next@example.test"), /tag-active">桌面端</);
   assert.match(accountRow(html, "magpie@example.test"), /tag-active">Magpie 首选</);
@@ -111,7 +111,7 @@ test("#3 page surfaces read errors, disables writes and clears the recovered err
   assert.equal(p.el("toastBanner").classList.contains("hidden"), true);
 });
 
-test("the provider list preserves plan labels even with an older member-only preference", () => {
+test("the provider list abbreviates known tiers and retains multipliers even with an older member-only preference", () => {
   const state = baseState();
   state.preferences.onlyPro = true;
   state.accounts = ["Google AI Pro", "Google AI Ultra (5x)", "Google AI Ultra (20x)", "Enterprise"].map((plan, i) => ({
@@ -122,7 +122,7 @@ test("the provider list preserves plan labels even with an older member-only pre
   state.accounts.push({ email: "unknown@example.test", tierLabel: "Unrecognized plan", isPaid: false, isEligible: true });
   const p = page(state);
   const rows = p.el("accountList").innerHTML;
-  for (const plan of ["Google AI Pro", "Google AI Ultra (5x)", "Google AI Ultra (20x)", "Enterprise"]) assert(rows.includes(plan));
+  for (const plan of ["Pro", "Ultra (5x)", "Ultra (20x)", "Enterprise", "Unrecognized plan"]) assert(rows.includes(`>${plan}</span>`));
   assert.match(rows, /free@example.test/);
   assert.match(rows, /unknown@example.test/);
 });
@@ -140,11 +140,11 @@ test("quota columns stay in model/window order regardless of input order", () =>
   }];
   const html = page(state).el("accountList").innerHTML;
   assert.deepEqual(html.match(/aria-label="[^"]+：[^"]+"/g), [
-    'aria-label="GPT / Claude 5h：100%"', 'aria-label="GPT / Claude 7d：0%"',
-    'aria-label="Gemini 5h：86%"', 'aria-label="Gemini 7d：84%"'
+    'aria-label="Gemini 5h：86%"', 'aria-label="Gemini 7d：84%"',
+    'aria-label="GPT / Claude 5h：100%"', 'aria-label="GPT / Claude 7d：0%"'
   ]);
   assert.match(html, /aria-valuenow="0"/);
-  assert.match(html, /width:0%/);
+  assert.match(html, /--remaining:0%/);
   assert.doesNotMatch(html, /Argon|5 小时|7 天|>账号<|>操作</);
 });
 
@@ -159,8 +159,8 @@ test("missing, invalid and expired cells keep their position without inventing z
   }];
   const html = page(state).el("accountList").innerHTML;
   assert.deepEqual(html.match(/aria-label="[^"]+：[^"]+"/g), [
-    'aria-label="GPT / Claude 5h：0%"', 'aria-label="GPT / Claude 7d：待刷新"',
-    'aria-label="Gemini 5h：未知"', 'aria-label="Gemini 7d：未知"'
+    'aria-label="Gemini 5h：未知"', 'aria-label="Gemini 7d：未知"',
+    'aria-label="GPT / Claude 5h：0%"', 'aria-label="GPT / Claude 7d：待刷新"'
   ]);
   assert.equal((html.match(/role="progressbar"/g) || []).length, 1);
   assert.match(html, /Gemini 5h：未知">—</);
@@ -178,7 +178,7 @@ test("account types are separate sections and inactive accounts stay collapsed a
   const p = page(state), html = p.el("accountList").innerHTML;
   assert(html.indexOf('aria-label="会员账号"') < html.indexOf('aria-label="免费账号"'));
   assert(html.indexOf('aria-label="免费账号"') < html.indexOf('aria-label="套餐未知"'));
-  assert.match(html, /Google AI Ultra \(20x\)/);
+  assert.match(html, />Ultra \(20x\)</);
   assert.doesNotMatch(html, /unavailable@example.test/);
   const disabledRow = p.el("unavailableList").innerHTML;
   assert.match(disabledRow, /unavailable@example.test/);
@@ -203,7 +203,7 @@ test("Carbon appears only for the windows supplied by an eligible account", () =
   ultra.quota = { pools: [{ pool: "Gemini 4 Carbon", window: "7 days", remaining: 0 }] };
   p.render(state);
   let html = p.el("accountList").innerHTML;
-  assert.match(html, /<strong>Gemini 4 Carbon<\/strong>/);
+  assert.deepEqual([...html.matchAll(/<strong>([^<]+)<\/strong>/g)].map((m) => m[1]), ["Gemini", "Gemini 4 Carbon", "GPT / Claude"]);
   assert.match(accountRow(html, ultra.email), /Gemini 4 Carbon 7d：0%/);
   assert.match(accountRow(html, pro.email), /Gemini 4 Carbon 7d：未知/);
   assert.doesNotMatch(html, /Gemini 4 Carbon 5h/);
@@ -224,7 +224,7 @@ test("Carbon appears only for the windows supplied by an eligible account", () =
   assert.doesNotMatch(p.el("accountList").innerHTML, /Gemini 4 Carbon/);
 });
 
-test("the page follows Magpie language changes and leaves provider plans intact", () => {
+test("the page follows Magpie language changes and keeps tier multipliers", () => {
   const state = baseState();
   state.accounts = [{
     email: "member@example.test", plan: "Google AI Ultra (20x)", isEligible: true, isPaid: true,
@@ -237,10 +237,11 @@ test("the page follows Magpie language changes and leaves provider plans intact"
   let html = p.el("accountList").innerHTML;
   assert.match(html, /Paid accounts/);
   assert.match(html, /Magpie preferred/);
-  assert.match(html, /Google AI Ultra \(20x\)/);
+  assert.match(html, />Ultra \(20x\)</);
   assert.match(html, /Gemini 5h: 75%/);
   assert.match(html, /Reset time: /);
   assert.match(html, />in 2h</);
+  assert.match(html, />2h</);
   assert.match(html, /CLI only/);
   assert.doesNotMatch(html, /\p{Script=Han}/u);
 
@@ -258,18 +259,20 @@ test("the page follows Magpie language changes and leaves provider plans intact"
   assert.equal(p.el("toastBanner").textContent, "1 个账号刷新失败");
 });
 
-test("the plan badge labels saved names in both languages and drops the note when a provider supplies the name", () => {
+test("live and saved plan names share short labels in both languages", () => {
   const state = baseState();
   const row = { email: "saved@example.test", isEligible: true, plan: "Google AI Pro", planFromLoginRecord: true };
-  state.accounts = [row, { ...row, email: "off@example.test", isEligible: false, tierLabel: "已停用" }];
+  state.accounts = [row, { ...row, email: "starter@example.test", plan: "Antigravity Starter Quota" }];
   const p = page(state);
-  assert.match(p.el("accountList").innerHTML, /Google AI Pro · 上次记录</);
-  assert.doesNotMatch(p.el("unavailableList").innerHTML, /上次记录/);
-  p.setLanguage("en-US");
-  assert.match(p.el("accountList").innerHTML, /Google AI Pro · Last recorded</);
+  for (const language of ["zh-CN", "en-US"]) {
+    p.setLanguage(language);
+    const html = p.el("accountList").innerHTML;
+    assert.match(html, />Pro</);
+    assert.match(html, />Starter</);
+    assert.doesNotMatch(html, /上次记录|Last recorded|Google AI Pro/);
+  }
   p.render({ ...state, accounts: [{ ...row, planFromLoginRecord: false }] });
-  assert.match(p.el("accountList").innerHTML, /Google AI Pro</);
-  assert.doesNotMatch(p.el("accountList").innerHTML, /Last recorded/);
+  assert.match(p.el("accountList").innerHTML, />Pro</);
 });
 
 test("English shows recoverable configuration errors and disabled provider status", () => {

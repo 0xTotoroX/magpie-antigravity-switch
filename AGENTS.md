@@ -20,7 +20,7 @@ macOS 上的 Magpie 页面插件与 CLI，使用 JavaScript ES modules、Node.js
 - 钥匙串更新不删除原条目，不使用 `-A`。已有条目保留访问权限，只在新建条目时设置有限的可信应用；不要每次切号重复提交 `-T`。需要 macOS 授权时遵循系统提示，不通过降低访问保护绕过。
 - `current.desktopRuntimeEmail` 是已查询到的运行身份；`desktopSavedEmail` 是保存的凭据身份。`desktopPending` 不等于切换已完成，查询失败不猜测运行身份。
 - 套餐与配额通过 Magpie 的 `quota refresh agy-cli` 与本地配额缓存读取；本地 desktop `language_server` 只确认当前运行账号，不使用旧保险库的 `plan` / `liveQuota` 分类或补额度。旧资料保留。同池推荐分数取各有效窗口的最小剩余量，缺失与过期读数不补满。
-- 页面按会员、免费与套餐未知分组，不可用账号默认折叠。额度固定为 GPT / Claude 的 5h、7d，Gemini 的 5h、7d，Gemini 4 Carbon 仅展示有有效独立读数的窗口。Argon 旧数据不计入配额投影和推荐。缺失保留列位，视觉用「—」，辅助技术仍读为未知。套餐沿用返回原名，agy-cli 缺失套餐名时可按邮箱使用 Magpie 保存的 Antigravity 登录套餐，并标记「上次记录」；明确识别 Pro、Ultra 和 Enterprise，只有已识别免费套餐计入免费版。未知名称不自动纳管。`isPro`、`counts.pro` 和 `onlyPro` 为旧版本兼容字段，会员判断使用 `isPaid`。
+- 页面按会员、免费与套餐未知分组，不可用账号默认折叠。额度从左到右展示 Gemini、按需出现的 Carbon 和 GPT / Claude；常规窗口为 5h、7d，Gemini 4 Carbon 仅展示有有效独立读数的窗口。Argon 旧数据不计入配额投影和推荐。缺失保留列位，视觉用「—」，辅助技术仍读为未知。页面简写已知套餐名并保留 Ultra 倍数，agy-cli 缺失套餐名时可按邮箱使用 Magpie 保存的 Antigravity 登录套餐；明确识别 Pro、Ultra 和 Enterprise，只有已识别免费套餐计入免费版。未知名称不自动纳管。`isPro`、`counts.pro` 和 `onlyPro` 为旧版本兼容字段，会员判断使用 `isPaid`。
 - `npm test` 是隔离回归验证；真实账号切换与系统授权交互需另外说明实际验证范围。
 - README 和公开 Release 只写用户需要的功能、安装与兼容说明；个人开发、本机版本和验收过程留在私有 Runbook。
 - 源码可能由已安装插件直接使用，修改 `core.mjs` 或 `daemon.mjs` 会触发后台进程自动重载。先在隔离副本验证，再同步。

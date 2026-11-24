@@ -20,8 +20,8 @@
 - 切换桌面端和 CLI 账号，并按需同步 Magpie 的首选账号。macOS 上本地 agy 1.5+ 的「仅 CLI」会更新新启动的 CLI 与桌面端共用的钥匙串登录。已打开的 CodexHost 会话需重新连接后读取新账号。
 - 区分实际运行账号与已保存、待生效的账号。
 - 页面同步 Magpie 的 agy-cli 供应商账号，邮箱旁标明桌面端和 CLI 的当前登录身份。
-- 展示 GPT / Claude 和 Gemini 的 5h 与 7d 额度。仅在返回有效独立读数时显示 Gemini 4 Carbon。缺失显示「—」，过期显示「待刷新」。
-- 按接口原名显示 Pro、Ultra、Enterprise 档位。
+- 从左到右展示 Gemini、GPT / Claude 的 5h 与 7d 额度。窄屏使用圆盘和短时间。仅在返回有效独立读数时显示 Gemini 4 Carbon。缺失显示「—」，过期显示「待刷新」。
+- 已知套餐简写为 Pro、Ultra、Enterprise 或 Starter。
 - 保留接口提供的 Ultra 倍数；未知档位不当作免费套餐。
 - 操作前创建并校验本地凭据备份；配置损坏时保留原文件。
 - 保留已有钥匙串访问权限，按系统提示完成授权。
@@ -81,7 +81,7 @@ node index.mjs members-only on
 
 页面的「刷新」同步 Magpie 的 agy-cli 供应商名单，并通过 Magpie 查询启用账号的套餐与额度。已移除的账号从列表消失，停用账号归入「不可用账号」。额度查询失败时显示原因，并保留同一登录此前仍有效的额度。未返回的窗口显示「未知」，过期读数显示「待刷新」。
 
-套餐优先显示 agy-cli 返回的原名。缺少套餐名时，插件按邮箱读取 Magpie 中保存的 Antigravity 登录记录，并在套餐旁标明「上次记录」。查看其他账号的记录无需切换登录。账号升级后若仍显示旧 Starter 标签，请参见 [Magpie 套餐刷新问题 #5621](https://github.com/yetone/magpie/issues/5621)；本插件不会自行推断或修改订阅档位。
+套餐优先取自 agy-cli。缺少套餐名时，插件按邮箱读取 Magpie 中保存的 Antigravity 登录记录。查看其他账号的记录无需切换登录。账号升级后若仍显示旧 Starter 标签，请参见 [Magpie 套餐刷新问题 #5621](https://github.com/yetone/magpie/issues/5621)；本插件不会自行推断或修改订阅档位。
 
 账号凭据和备份保存在本机，不随插件发布。macOS 可能要求访问钥匙串；拒绝授权时操作停止。请只在自己有权使用的账号之间切换。
 

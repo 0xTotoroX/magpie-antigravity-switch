@@ -23,7 +23,6 @@
     members: ["会员账号", "Paid accounts"],
     freeAccounts: ["免费账号", "Free accounts"],
     planUnknown: ["套餐未知", "Unknown plan"],
-    lastRecordedPlan: ["上次记录", "Last recorded"],
     unavailable: ["不可用", "Unavailable"],
     disabled: ["已停用", "Disabled"],
     activateDesktop: ["应用桌面端", "Apply to Desktop"],
@@ -140,9 +139,10 @@
     return backendMessages.reduce((result, [pattern, translation]) => result.replace(pattern, translation), message);
   }
 
-  function reset(minutes) {
+  function reset(minutes, compact = false) {
     const [size, zh, en] = minutes >= 1440 ? [1440, "天", "d"] : minutes >= 60 ? [60, "小时", "h"] : [1, "分", "m"];
     const value = Math.floor(minutes / size);
+    if (compact) return `${value}${en}`;
     return lang === "en" ? `in ${value}${en}` : `${value}${zh}后`;
   }
 
