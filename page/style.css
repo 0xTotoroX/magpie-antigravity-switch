@@ -1,6 +1,6 @@
 /*
  * [INPUT]: Magpie 主题变量与账号分组、五窗口额度页面结构。
- * [OUTPUT]: 深浅模式的不透明页面底色、平面按钮、刷新反馈、行内切换动效、账号列表、宽屏额度条与窄屏额度圆盘。
+ * [OUTPUT]: 深浅模式的不透明底色、操作反馈、账号列表、宽屏额度条、窄屏额度圆盘与常显的额度倒计时。
  * [POS]: Antigravity Switch 页面唯一样式入口。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -625,10 +625,6 @@ body {
   white-space: nowrap;
 }
 
-.quota-cell:not(.is-low, :hover, :focus) .quota-reset {
-  visibility: hidden;
-}
-
 .quota-cell:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
@@ -754,7 +750,6 @@ summary:focus-visible {
   .quota-fill { display: none; }
 
   .quota-cell .quota-reset { grid-row: 3; font-size: 11px; }
-  .quota-cell:not(.is-low, :hover, :focus) .quota-reset { visibility: visible; }
 }
 
 @media (max-width: 740px) {
