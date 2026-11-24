@@ -60,9 +60,14 @@ body {
   gap: 14px;
 }
 
+.shell.hide-cli-actions {
+  --action-width: 71px;
+  --action-columns: 1;
+}
+
 .topbar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 7.8em;
+  grid-template-columns: auto minmax(0, 1fr) calc(7.8em + 49px);
   align-items: center;
   gap: 8px;
 }
@@ -119,6 +124,8 @@ body {
   justify-self: end;
   display: flex;
   align-items: center;
+  width: 100%;
+  min-width: 0;
   gap: 6px;
 }
 
@@ -133,12 +140,31 @@ body {
   background: color-mix(in srgb, var(--text) 5%, var(--bg));
 }
 
+#btnToggleCli {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  flex: none;
+  padding-inline: 5px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.cli-toggle-slash { display: none; }
+#btnToggleCli[aria-pressed="false"] { color: var(--muted); }
+#btnToggleCli[aria-pressed="false"] .cli-toggle-slash { display: block; }
+
 #btnRefresh {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 1;
+  min-width: 0;
   gap: 6px;
 }
+
+#refreshLabel { overflow: hidden; text-overflow: ellipsis; }
 
 .refresh-icon {
   flex: none;
@@ -221,12 +247,6 @@ body {
 .btn-cli:hover:not(:disabled) {
   background: var(--bg);
   border-color: var(--border);
-}
-
-.cli-status {
-  color: var(--muted);
-  font-size: 12px;
-  flex-shrink: 0;
 }
 
 .quota-status {
@@ -538,6 +558,17 @@ body {
   color: var(--primary);
 }
 
+.tag.tag-cli {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 50%, var(--bg));
+  color: var(--secondary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+
 .account-quotas {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 2fr));
@@ -653,7 +684,7 @@ body {
 
 .account-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--action-columns, 2), minmax(0, 1fr));
   align-items: center;
   gap: 4px;
   width: min(var(--action-width), 100%);
@@ -791,17 +822,19 @@ summary:focus-visible {
   .quota-status { text-align: end; }
   .issue-long { display: none; }
   .issue-short { display: inline; }
+  .topbar { grid-template-columns: minmax(0, max-content) minmax(0, 1fr) calc(7.2em + 32px); }
+  .title-row { flex-wrap: nowrap; }
+  .title-block h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .support-link { flex: none; }
+  .cli-toggle-label { display: none; }
 }
 
 @media (max-width: 440px) {
-  .topbar { grid-template-columns: minmax(0, 1fr) 4.7em 7.2em; gap: 5px; }
-  .title-row { gap: 4px; flex-wrap: nowrap; }
-  .title-block h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar { grid-template-columns: minmax(0, 1fr) 4.7em calc(7.2em + 32px); gap: 5px; }
+  .title-row { gap: 4px; }
   .support-link { padding: 4px; }
   .support-link span { display: none; }
   #btnRefresh { max-width: 100%; padding-inline: 2px; }
-  #refreshLabel { overflow: hidden; text-overflow: ellipsis; }
-  .toolbar { max-width: 100%; }
   .account-row { grid-template-columns: minmax(0, 1fr); }
   .account-actions {
     grid-area: auto;

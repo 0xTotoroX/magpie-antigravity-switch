@@ -49,6 +49,7 @@ function page(state, language = "zh-CN", send) {
     clickSaved: () => click({ target: new Element('[data-action="saved-login-detail"]') }),
     clickFeedback: () => click({ target: new Element('[data-action="feedback-detail"]') }),
     clickRefresh: () => click({ target: new Element("#btnRefresh") }),
+    clickCliToggle: () => click({ target: new Element("#btnToggleCli") }),
     clickSwitch: (email, action = "switch-all") => click({ target: new Element("[data-action]", { "data-action": action, "data-email": email }) }),
     expireToast: () => toastTimer?.()
   };
@@ -70,7 +71,7 @@ test("#5 legacy snapshot flags cannot mark a desktop session active or offer App
   state.recommendedEmail = "next@example.test";
   const p = page(state), html = p.el("accountList").innerHTML;
   assert.doesNotMatch(accountRow(html, "old@example.test"), /tag-active">桌面端</);
-  assert.match(accountRow(html, "next@example.test"), /cli-status" title="[^"]+">CLI</);
+  assert.match(accountRow(html, "next@example.test"), /tag tag-cli" title="[^"]+">CLI</);
   assert.match(accountRow(html, "next@example.test"), /desktop-pending" title="桌面端账号待确认">待确认/);
   assert.doesNotMatch(html, /应用到桌面/);
   assert.doesNotMatch(accountRow(html, "next@example.test"), />桌面端待生效</);
@@ -113,6 +114,34 @@ test("the CLI-only control describes the shared login for recent local agy", () 
   state.current = { cliEmail: "old@example.test", cliUsesSharedLogin: true };
   state.accounts = [{ email: "next@example.test", isPaid: true, isEligible: true, hasCredentials: true }];
   assert.match(page(state).el("accountList").innerHTML, /title="新启动的 CLI 和桌面端共用此登录"/);
+});
+
+test("the CLI visibility toggle remembers its choice and preserves the current CLI tag", async () => {
+  const email = "cli@example.test";
+  const state = { ...baseState(), accounts: [{ email, activeCli: true, isEligible: true, hasCredentials: true }] };
+  const setVisibility = async cmd => {
+    assert.equal(cmd.type, "set-cli-visibility");
+    state.hideCliAction = cmd.hidden;
+    return { hideCliAction: cmd.hidden };
+  };
+  const p = page(state, "zh", setVisibility);
+  assert.equal(p.el("btnToggleCli").getAttribute("aria-pressed"), "true");
+  p.clickCliToggle();
+  await new Promise(setImmediate);
+  assert.equal(p.el("btnToggleCli").getAttribute("aria-pressed"), "false");
+  assert.equal(p.el("btnToggleCli").title, "显示「仅 CLI」按钮");
+  assert(p.el("switchPage").classList.contains("hide-cli-actions"));
+  const row = accountRow(p.el("accountList").innerHTML, email);
+  assert.doesNotMatch(row, /data-action="switch-cli"/);
+  assert.match(row, /data-action="switch-all"/);
+  assert.match(row, /tag tag-cli" title="[^"]+">CLI</);
+  const reopened = page(state, "en", setVisibility);
+  assert.equal(reopened.el("btnToggleCli").getAttribute("aria-pressed"), "false");
+  assert.equal(reopened.el("btnToggleCli").title, "Show CLI-only buttons");
+  reopened.clickCliToggle();
+  await new Promise(setImmediate);
+  assert.match(reopened.el("accountList").innerHTML, /data-action="switch-cli"/);
+  assert.equal(page(state, "zh").el("btnToggleCli").getAttribute("aria-pressed"), "true");
 });
 
 test("#8 page does not describe an unknown quota or plan as normal or free", () => {
@@ -461,7 +490,7 @@ test("unverified switch feedback stays in the target row and a CLI-only success 
   assert.match(cli.el("accountList").innerHTML, /is-busy" id="switch-cli-target@example.test"/);
   await new Promise(setImmediate);
   const success = accountRow(cli.el("accountList").innerHTML, email);
-  assert.match(success, /cli-status" title="[^"]+">CLI</);
+  assert.match(success, /tag tag-cli" title="[^"]+">CLI</);
   assert.match(success, /data-action="switch-cli"/);
   assert.doesNotMatch(success, /icon-check/);
 });

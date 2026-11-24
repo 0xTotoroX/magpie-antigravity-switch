@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 页面目录、Magpie 插件声明的本机端口、已脱敏的页面状态和串行指令处理器。
- * [OUTPUT]: 仅回环可达的页面服务；凭证只随 Magpie 的私有启动页交付。
+ * [OUTPUT]: 仅回环可达的页面服务和本机界面偏好；凭证只随 Magpie 的私有启动页交付。
  * [POS]: 守护进程内的页面传输层，不读取账号凭据或修改插件设置。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -19,16 +19,26 @@ function pageCommand(input) {
   if (!input || typeof input.id !== "string" || !/^cmd-[\w-]{1,80}$/.test(input.id)) return null;
   const cmd = { id: input.id, type: input.type, language: input.language === "en" ? "en" : "zh", ts: Date.now() };
   if (["refresh", "open-github", "reload-desktop"].includes(cmd.type)) return cmd;
+  if (cmd.type === "set-cli-visibility") {
+    return typeof input.hidden === "boolean" ? { ...cmd, hidden: input.hidden } : null;
+  }
   if (cmd.type !== "switch" || !["all", "cli"].includes(input.target) ||
       typeof input.email !== "string" || !input.email || input.email.length > 320) return null;
   return { ...cmd, email: input.email, target: input.target, reloadDesktop: input.target === "all", syncMagpie: true };
 }
 
-export function startPageService({ pageDir, port, getState, submit }) {
+export function startPageService({ pageDir, preferenceFile, port, getState, submit }) {
   const runtime = path.join(pageDir, ".runtime");
   const ready = path.join(runtime, "connection.js");
   fs.mkdirSync(runtime, { recursive: true, mode: 0o700 });
   const key = randomBytes(32).toString("hex");
+  let hideCliAction = false;
+  try {
+    hideCliAction = JSON.parse(fs.readFileSync(preferenceFile, "utf8"))?.hideCliAction === true;
+  } catch {
+    // 首次打开或偏好无法读取时默认显示。
+  }
+  const withPreference = state => state && { ...state, hideCliAction };
   const publish = (connection) => {
     const temp = ready + ".tmp-" + process.pid;
     fs.writeFileSync(temp, "globalThis.agyConnection = " + JSON.stringify(connection) + ";\n", { mode: 0o600 });
@@ -65,7 +75,7 @@ export function startPageService({ pageDir, port, getState, submit }) {
       }
       if (req.headers.authorization !== "Bearer " + key) return send(403);
       res.setHeader("Content-Type", "application/json; charset=utf-8");
-      if (route === "/state" && req.method === "GET") return send(200, JSON.stringify(getState()));
+      if (route === "/state" && req.method === "GET") return send(200, JSON.stringify(withPreference(getState())));
       if (route !== "/command" || req.method !== "POST") return send(405);
       if (req.headers["content-type"]?.split(";")[0] !== "application/json") return send(415);
       const chunks = [];
@@ -78,8 +88,19 @@ export function startPageService({ pageDir, port, getState, submit }) {
       let cmd;
       try { cmd = pageCommand(JSON.parse(Buffer.concat(chunks).toString("utf8"))); } catch { /* malformed request */ }
       if (!cmd) return send(400);
+      if (cmd.type === "set-cli-visibility") {
+        const temp = preferenceFile + ".tmp-" + process.pid;
+        try {
+          fs.writeFileSync(temp, JSON.stringify({ hideCliAction: cmd.hidden }) + "\n", { mode: 0o600 });
+          fs.renameSync(temp, preferenceFile);
+        } finally {
+          fs.rmSync(temp, { force: true });
+        }
+        hideCliAction = cmd.hidden;
+        return send(200, JSON.stringify({ hideCliAction }));
+      }
       const state = await submit(cmd);
-      return send(200, JSON.stringify(state));
+      return send(200, JSON.stringify(withPreference(state)));
     } catch {
       return send(500);
     }

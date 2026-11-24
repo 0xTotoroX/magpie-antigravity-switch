@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 本机页面服务的账号快照、i18n.js 文案与 Magpie 页面桥接。
- * [OUTPUT]: Gemini 与 GPT / Claude 共享额度、套餐简称、邮箱旁的桌面登录标记、原位切换反馈与工具栏额度补查。
+ * [OUTPUT]: 额度、套餐简称、桌面与 CLI 账号标识、原位切换反馈、仅 CLI 的本机可见性偏好。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -16,6 +16,9 @@
   const t = i18n.text;
 
   let currentState = globalThis.__AGY_SWITCH_STATE__ || null;
+  let cliActionsHidden = currentState?.hideCliAction === true;
+  let cliVisibilityLoaded = typeof currentState?.hideCliAction === "boolean";
+  let savingCliVisibility = false;
   let pendingCommand;
   let trackedCommand;
   let feedback;
@@ -250,14 +253,14 @@
         <div class="account-main">
           <div class="account-title-line">
             <span class="account-email" title="${escapeHtml(account.email)}">${escapeHtml(account.email)}</span>${renderDesktopMark(account)}
-            ${account.activeCli ? `<span class="cli-status" title="${t("cliNext")}">CLI</span>` : ""}
+            ${account.activeCli ? `<span class="tag tag-cli" title="${t("cliNext")}">CLI</span>` : ""}
           </div>
           <div class="account-tags"><span class="tag ${tierClass}">${escapeHtml(tierLabel)}</span>${magpieTag}</div>
           ${quotaIssue ? `<span class="account-issue">${escapeHtml(quotaIssue)}</span>` : ""}
         </div>
         ${renderQuotaGrid(account, quotaGroups)}
         ${showActions ? `<div class="account-actions" id="actions-${escapeHtml(account.email)}" tabindex="-1">
-          ${renderSwitchButton(account, "all")}${renderSwitchButton(account, "cli")}
+          ${renderSwitchButton(account, "all")}${cliActionsHidden ? "" : renderSwitchButton(account, "cli")}
         </div>` : ""}
       </div>
     `;
@@ -303,6 +306,12 @@
     document.getElementById("refreshLabel").textContent = progress?.total ? `${t("refreshProgress")} ${progress.completed}/${progress.total}`
       : refreshing ? t("refreshing") : refreshResult && !refreshResult.warning ? feedbackLabel(refreshResult) : t("refresh");
     document.getElementById("btnGitHubStar").disabled = Boolean(pendingCommand);
+    const cliToggle = document.getElementById("btnToggleCli");
+    cliToggle.disabled = !state || savingCliVisibility || pendingCommand?.target === "cli";
+    cliToggle.setAttribute("aria-pressed", String(!cliActionsHidden));
+    cliToggle.setAttribute("aria-label", t("showCliAction"));
+    cliToggle.title = t(cliActionsHidden ? "showCliAction" : "hideCliAction");
+    document.getElementById("switchPage").classList.toggle("hide-cli-actions", cliActionsHidden);
 
     const error = state?.error || readError || (feedback?.cmd.type === "open-github" && feedback.warning && feedback.detail);
     const toast = document.getElementById("toastBanner");
@@ -372,6 +381,10 @@
   function receiveState(state) {
     if (!state) return;
     if (state.generatedAt && currentState?.generatedAt && state.generatedAt < currentState.generatedAt) return;
+    if (!cliVisibilityLoaded && typeof state.hideCliAction === "boolean") {
+      cliActionsHidden = state.hideCliAction;
+      cliVisibilityLoaded = true;
+    }
     readError = "";
     if (trackedCommand && state.lastSwitch?.cmdId === trackedCommand.id) {
       finishCommand(trackedCommand, state.lastSwitch);
@@ -394,7 +407,7 @@
   async function sendPluginCommand(cmdPayload) {
     const refresh = cmdPayload.type === "refresh";
     if (refresh ? pendingRefresh : pendingCommand) return;
-    const cmdId = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const cmdId = commandId();
     const fullCmd = { ...cmdPayload, id: cmdId, ts: Date.now(), language: i18n.locale() };
 
     if (refresh) {
@@ -424,6 +437,26 @@
     } finally {
       if (refresh) pendingRefresh = false;
       else { pendingCommand = null; trackedCommand = null; }
+      render(currentState);
+    }
+  }
+
+  function commandId() {
+    return `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  async function toggleCliVisibility() {
+    if (!currentState || savingCliVisibility || pendingCommand?.target === "cli") return;
+    savingCliVisibility = true;
+    render(currentState);
+    try {
+      const result = await globalThis.agyPage.command({ type: "set-cli-visibility", id: commandId(), hidden: !cliActionsHidden });
+      cliActionsHidden = result.hideCliAction;
+      cliVisibilityLoaded = true;
+    } catch {
+      openDetails(t("showCliAction"), t("cliVisibilityFailed"));
+    } finally {
+      savingCliVisibility = false;
       render(currentState);
     }
   }
@@ -470,6 +503,11 @@
       return;
     }
 
+    if (target.closest("#btnToggleCli")) {
+      toggleCliVisibility();
+      return;
+    }
+
     const actionBtn = target.closest("[data-action]");
     if (!actionBtn) return;
 
@@ -484,7 +522,7 @@
         reloadDesktop: true,
         syncMagpie: true
       });
-    } else if (action === "switch-cli" && email) {
+    } else if (action === "switch-cli" && email && !cliActionsHidden) {
       sendPluginCommand({
         type: "switch",
         email,

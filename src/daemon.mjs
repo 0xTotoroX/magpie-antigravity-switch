@@ -238,7 +238,8 @@ function startInProcessWatcher(reloadIfChanged) {
   const pageDir = path.join(PLUGIN_DIR, "page");
   const { port } = JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, "package.json"), "utf8")).magpie.page.service;
   const stopService = startPageService({
-    pageDir, port, getState: () => progress ? { ...pageState, refreshProgress: progress } : pageState,
+    pageDir, preferenceFile: path.join(PATHS.magpieDir, "antigravity-switch-page.json"),
+    port, getState: () => progress ? { ...pageState, refreshProgress: progress } : pageState,
     submit(cmd) {
       if (cmd.type === "refresh") return refreshPage(cmd);
       const receivedAt = Date.now();
