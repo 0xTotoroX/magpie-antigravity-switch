@@ -57,17 +57,6 @@
       "icon": "page/icon.svg",
       "keepAlive": false
     },
-    "actions": [
-      {
-        "id": "switch-antigravity",
-        "menu": "agent",
-        "title": "Switch Antigravity account",
-        "titles": {
-          "zh": "切换 Antigravity 账号",
-          "zh-TW": "切換 Antigravity 帳號"
-        }
-      }
-    ],
     "options": {},
     "permissions": []
   },
