@@ -158,16 +158,20 @@
     const hasReading = !quota.error && quota.pools?.some((pool) =>
       Number.isFinite(pool.remaining) && !isStale(pool) &&
       quotaGroups.some((group) => group.pool === pool.pool && group.windows.includes(pool.window)));
-    if (!hasReading) return "";
+    if (!hasReading) return null;
 
     const date = new Date(quota.updatedAt ?? NaN);
-    const updated = Number.isFinite(date.getTime())
-      ? new Intl.DateTimeFormat(i18n.locale(), {
-        ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
-        month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
-      }).format(date).replace(", ", " ")
-      : t("timeUnknown");
-    return `${t("previousReading")} ${updated}`;
+    if (!Number.isFinite(date.getTime())) return { full: t("timeUnknown"), short: t("previousReading") };
+    const now = new Date();
+    const clock = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+    const stamp = new Intl.DateTimeFormat(i18n.locale(), {
+      ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+      month: "2-digit", day: "2-digit", ...clock
+    }).format(date).replace(", ", " ");
+    const shortStamp = date.toDateString() === now.toDateString()
+      ? new Intl.DateTimeFormat(i18n.locale(), clock).format(date)
+      : stamp;
+    return { full: `${t("previousReading")} ${stamp}`, short: `${t("previousReadingShort")} ${shortStamp}` };
   }
 
   function quotaNotice(quota, quotaGroups) {
@@ -175,12 +179,11 @@
     const error = quota.error || quota.refreshError;
     if (quota.retryPending || systemQuotaReason(error) || (!error && !quota.previousReading)) return "";
     const reason = error === "Magpie 未能刷新这个账号的额度" ? t("refreshFailed") : i18n.backend(error);
-    return [reason, previousReading(quota, quotaGroups)].filter(Boolean).join(" · ");
+    return [reason, previousReading(quota, quotaGroups)?.full].filter(Boolean).join(" · ");
   }
 
-  function sharedHistory(rows) {
-    if (rows.every((row) => row.previous === rows[0].previous)) return rows[0].previous;
-    return rows.some((row) => row.previous) ? t("previousReading") : "";
+  function samePreviousReading(rows) {
+    return rows.every(row => row.previous?.full === rows[0].previous?.full);
   }
 
   function sharedQuotaIssue(accounts, quotaGroups) {
@@ -195,15 +198,12 @@
     }
     if (!groups.size) return null;
     const details = [];
-    let label;
     for (const [reason, rows] of groups) {
-      const all = rows.length === accounts.length;
-      const same = rows.every((row) => row.previous === rows[0].previous);
-      const scope = all ? "" : i18n.accountCount(rows.length);
-      label = [reason, scope, sharedHistory(rows)].filter(Boolean).join(" · ");
-      const affected = rows.map(({ email, cause, previous }) => [email, cause, !same && previous].filter(Boolean).join(" · "));
+      const same = samePreviousReading(rows);
+      const heading = [reason, same && rows[0].previous?.full].filter(Boolean).join(" · ");
+      const affected = rows.map(({ email, cause, previous }) => [email, cause, !same && previous?.full].filter(Boolean).join(" · "));
       const guidance = reason === t("quotaRenewalFailed") ? [t("quotaRenewalDetail")] : [];
-      details.push([label, ...guidance, ...affected].join("\n"));
+      details.push([heading, ...guidance, ...affected].join("\n"));
     }
     const onlyReason = groups.size === 1 ? groups.keys().next().value : null;
     const retryOnly = onlyReason === t("quotaRetry");
@@ -212,10 +212,9 @@
       [t("quotaQueryTimeout")]: t("quotaTimedOut"),
       [t("quotaRenewalFailed")]: t("quotaRenewalShort")
     })[onlyReason] || t("quotaProblem");
-    if (groups.size > 1) {
-      const rows = [...groups.values()].flat();
-      label = [t("quotaProblem"), i18n.accountCount(rows.length), sharedHistory(rows)].filter(Boolean).join(" · ");
-    }
+    const rows = [...groups.values()].flat();
+    const history = samePreviousReading(rows) ? rows[0].previous?.short : rows.some(row => row.previous) && t("previousReading");
+    const label = [shortLabel, history].filter(Boolean).join(" · ");
     return { label, detail: details.join("\n\n"), retryOnly, shortLabel };
   }
 
@@ -351,8 +350,8 @@
     issueButton.innerHTML = toolbarIssue
       ? `<span class="issue-long">${escapeHtml(toolbarIssue.label)}</span><span class="issue-short">${escapeHtml(toolbarIssue.shortLabel || t("quotaProblem"))}</span>`
       : "";
-    issueButton.title = toolbarIssue?.detail || "";
-    issueButton.setAttribute("aria-label", issueButton.title);
+    issueButton.title = toolbarIssue ? t("viewDetails") : "";
+    issueButton.setAttribute("aria-label", toolbarIssue?.label || "");
     const switchEmail = pendingCommand?.email || feedback?.cmd.email;
     const status = pendingCommand?.email ? t("switching")
       : switchEmail ? feedbackLabel() : refreshing ? t("refreshing") : "";

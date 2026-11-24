@@ -420,7 +420,9 @@ test("refresh stays busy across unrelated updates until its own result arrives",
   assert.equal(btn.getAttribute("aria-busy"), "false");
   assert.equal(btn.disabled, false);
   assert.equal(p.el("refreshLabel").textContent, "Refresh");
-  assert.equal(p.el("quotaStatus").title, "额度查询失败");
+  assert.equal(p.el("quotaStatus").title, "View details");
+  p.clickQuotaStatus();
+  assert.equal(p.el("feedbackBody").textContent, "额度查询失败");
 });
 
 test("the quota timeout follows Magpie's language and keeps available readings visible", () => {
@@ -430,13 +432,16 @@ test("the quota timeout follows Magpie's language and keeps available readings v
     pools: [{ pool: "Gemini", window: "7 days", remaining: 72 }]
   } }];
   const p = page(state);
-  assert.match(p.el("quotaStatus").title, /agy 额度查询超时 · 上次数据 更新时间未知/);
+  assert.match(p.el("quotaStatus").innerHTML, /额度超时 · 上次数据/);
+  p.clickQuotaStatus();
+  assert.match(p.el("feedbackBody").textContent, /agy 额度查询超时 · 上次数据时间未知/);
   assert.doesNotMatch(p.el("accountList").innerHTML, /额度查询超时|上次数据/);
   assert.match(p.el("accountList").innerHTML, /aria-valuenow="72"/);
 
   state.accounts[0].quota.refreshError = "context deadline exceeded";
   p.setLanguage("en");
-  assert.match(p.el("quotaStatus").title, /The agy quota query timed out/);
+  p.clickQuotaStatus();
+  assert.match(p.el("feedbackBody").textContent, /The agy quota query timed out/);
   assert.match(p.el("accountList").innerHTML, /aria-valuenow="72"/);
 });
 
@@ -578,9 +583,9 @@ test("shared failures with different histories list each date in details and rec
   const state = { ...baseState(), accounts: [row("a@example.test","context deadline exceeded",20),
     row("b@example.test","agy usage query timed out.",21),row("c@example.test","登录已失效，请在 Magpie 重新登录",22)] };
   const p = page(state);
-  const details = p.el("quotaStatus").title;
+  p.clickQuotaStatus();
+  const details = p.el("feedbackBody").textContent;
   assert.equal(details.match(/agy 额度查询超时/g)?.length, 1);
-  assert.match(details, /2 个账号/);
   assert.match(details, /a@example.test.*11.20/);
   assert.match(details, /b@example.test.*11.21/);
   assert.doesNotMatch(p.el("accountList").innerHTML, /额度查询超时/);
@@ -592,8 +597,10 @@ test("shared failures with different histories list each date in details and rec
 
 test("sign-in renewal failures stay in the toolbar with a localized cause and cached quota", () => {
   const renewal = "agy's stored sign-in couldn't be renewed. Check the network or proxy.";
+  const reading = new Date();
+  reading.setHours(17, 46, 0, 0);
   const row = (email, refreshError) => ({ email, isEligible: true, hasCredentials: true, quota: {
-    refreshError, updatedAt: "2026-11-24T17:17:00+08:00",
+    refreshError, updatedAt: reading.toISOString(),
     pools: [{ pool: "Gemini", window: "7 days", remaining: 66 }]
   } });
   const account = row("renew@example.test", renewal);
@@ -601,7 +608,8 @@ test("sign-in renewal failures stay in the toolbar with a localized cause and ca
   const p = page(state);
   const status = p.el("quotaStatus");
   const list = p.el("accountList");
-  assert.match(status.innerHTML, /额度异常 · 2 个账号 · 上次数据/);
+  assert.match(status.innerHTML, /额度异常 · 上次 17:46/);
+  assert.equal(status.title, "查看详情");
   assert.doesNotMatch(list.innerHTML, /stored sign-in|续期失败|查询超时/);
   const rendered = accountRow(list.innerHTML, account.email);
   assert.match(rendered, />66%<\/strong>/);
@@ -609,16 +617,23 @@ test("sign-in renewal failures stay in the toolbar with a localized cause and ca
   p.clickQuotaStatus();
   const detail = p.el("feedbackBody").textContent;
   assert.match(detail, /登录续期失败/);
-  assert.match(detail, /续期已保存的登录.*检查网络或代理/);
+  assert.match(detail, /若持续失败，检查网络或代理。/);
   assert.match(detail, /renew@example.test/);
   assert.match(detail, /slow@example.test/);
   assert.doesNotMatch(detail, /重新登录|stored sign-in/);
   p.render({ ...state, accounts: [account] });
-  assert.match(status.innerHTML, /issue-long">登录续期失败/);
+  assert.match(status.innerHTML, /issue-long">续期失败 · 上次 17:46<\/span>/);
   assert.match(status.innerHTML, /issue-short">续期失败/);
+  const older = new Date(reading);
+  older.setDate(older.getDate() - 1);
+  account.quota.updatedAt = older.toISOString();
+  p.render({ ...state, accounts: [account] });
+  assert.match(status.innerHTML, /issue-long">续期失败 · 上次 \d{2}\/\d{2} 17:46<\/span>/);
   p.setLanguage("en");
-  assert.match(status.title, /Sign-in renewal failed/);
-  assert.match(status.title, /network or proxy/);
+  assert.equal(status.title, "View details");
+  p.clickQuotaStatus();
+  assert.match(p.el("feedbackBody").textContent, /Sign-in renewal failed/);
+  assert.match(p.el("feedbackBody").textContent, /network or proxy/);
 });
 
 test("quota progress and account switching stay independent when their responses overlap", async () => {
@@ -652,16 +667,18 @@ test("pending retries keep history in the toolbar, then expose final failures or
   state.accounts = [{ email: "a@example.test", quota, isEligible: true }];
   const p = page(state);
   const notice = p.el("quotaStatus");
-  assert.match(notice.innerHTML, /补查中.*上次数据/);
+  assert.match(notice.innerHTML, /补查中.*上次/);
   assert.doesNotMatch(notice.innerHTML, /查询超时/);
-  assert.match(notice.title, /查询超时/);
+  p.clickQuotaStatus();
+  assert.match(p.el("feedbackBody").textContent, /查询超时/);
   assert(notice.classList.contains("is-retrying"));
   assert.doesNotMatch(p.el("accountList").innerHTML, /后台补查中/);
   quota.retryPending = false;
   p.render(state);
-  assert.match(notice.innerHTML, /查询超时/);
+  assert.match(notice.innerHTML, /额度超时/);
   assert.match(notice.innerHTML, /issue-short">额度超时/);
-  assert.match(notice.title, /a@example.test/);
+  p.clickQuotaStatus();
+  assert.match(p.el("feedbackBody").textContent, /a@example.test/);
   assert(!notice.classList.contains("is-retrying"));
   delete quota.refreshError;
   p.render(state);

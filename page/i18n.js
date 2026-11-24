@@ -48,7 +48,9 @@
     cliShared: ["新启动的 CLI 和桌面端共用此登录", "New CLI processes and the desktop app share this sign-in"],
     cliNext: ["供新启动的 CLI 使用", "Use this account for new CLI processes"],
     previousReading: ["上次数据", "Previous reading"],
-    timeUnknown: ["更新时间未知", "Update time unknown"],
+    previousReadingShort: ["上次", "Previous"],
+    timeUnknown: ["上次数据时间未知", "Previous reading time unknown"],
+    viewDetails: ["查看详情", "View details"],
     refreshFailed: ["刷新失败", "Refresh failed"],
     quotaWait: ["待刷新", "Needs refresh"],
     unknown: ["未知", "Unknown"],
@@ -64,8 +66,7 @@
     quotaTimedOut: ["额度超时", "Timed out"],
     quotaRenewalFailed: ["登录续期失败", "Sign-in renewal failed"],
     quotaRenewalShort: ["续期失败", "Renewal failed"],
-    quotaRenewalDetail: ["agy 暂时无法续期已保存的登录。若持续失败，请检查网络或代理。",
-      "agy could not renew the saved sign-in. If this persists, check the network or proxy."],
+    quotaRenewalDetail: ["若持续失败，检查网络或代理。", "If this persists, check the network or proxy."],
     commandFailed: ["指令发送失败", "Could not send the command"]
   };
 
@@ -170,7 +171,6 @@
   function backend(value) {
     const message = String(value ?? "");
     const issue = quotaIssueKey(message);
-    if (issue === "quotaRenewalFailed") return text("quotaRenewalDetail");
     if (issue) return text(issue);
     if (lang !== "en") return message;
     return backendMessages.reduce((result, [pattern, translation]) => result.replace(pattern, translation), message);
