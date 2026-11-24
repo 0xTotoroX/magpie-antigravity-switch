@@ -15,13 +15,13 @@
             <h1>Antigravity Switch</h1>
             <button
               type="button"
-              class="support-link"
+              class="btn toolbar-action support-link"
               id="btnGitHubStar"
               title="打开 GitHub 仓库并点亮 Star 支持项目" data-i18n-title="supportTitle"
               aria-label="前往 GitHub 仓库点亮 Star 支持项目" data-i18n-label="supportTitle"
             >
               <svg class="toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
-                <path d="M8 1.5l2.03 4.11 4.54.66-3.28 3.2.77 4.52L8 11.86 3.94 13.99l.77-4.52-3.28-3.2 4.54-.66L8 1.5z" />
+                <path d="M8 2.2 9.8 5.9l4.1.6-2.95 2.9.7 4.1L8 11.55 4.35 13.5l.7-4.1L2.1 6.5l4.1-.6Z" />
               </svg>
               <span data-i18n="support">支持</span>
             </button>
@@ -29,20 +29,20 @@
         </div>
         <button type="button" id="quotaStatus" class="quota-status" hidden></button>
         <div class="toolbar">
-          <button type="button" class="btn" id="btnToggleCli" aria-controls="accountList"
+          <button type="button" class="btn toolbar-action" id="btnToggleCli" aria-controls="accountList"
             aria-label="显示 CLI 标签和操作" aria-pressed="false" title="显示 CLI 标签和操作">
             <svg class="toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
               <g class="cli-toggle-eye">
-                <path d="M1.5 8s2.2-4 6.5-4 6.5 4 6.5 4-2.2 4-6.5 4-6.5-4-6.5-4Z" />
+                <path d="M2 8s2.1-4.1 6-4.1S14 8 14 8s-2.1 4.1-6 4.1S2 8 2 8Z" />
                 <circle cx="8" cy="8" r="1.7" />
               </g>
-              <path class="cli-toggle-eye-off" d="M2 2l12 12M6.4 4.2C6.9 4.1 7.4 4 8 4c4.3 0 6.5 4 6.5 4s-.7 1.2-2 2.3M9.6 11.8c-.5.1-1 .2-1.6.2-4.3 0-6.5-4-6.5-4s.7-1.2 2-2.3" />
+              <path class="cli-toggle-eye-off" d="m2.3 2.3 11.4 11.4M6.4 4.1A6.3 6.3 0 0 1 8 3.9C11.9 3.9 14 8 14 8s-.6 1.15-1.7 2.2M9.6 11.9a6.3 6.3 0 0 1-1.6.2C4.1 12.1 2 8 2 8s.6-1.15 1.7-2.2" />
             </svg>
             <span>CLI</span>
           </button>
-          <button type="button" class="btn btn-ghost" id="btnRefresh">
+          <button type="button" class="btn toolbar-action" id="btnRefresh">
             <svg class="toolbar-icon" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M13.4 6A5.75 5.75 0 1 0 13.5 9.6M13.5 2.5V6h-3.5" />
+              <path d="M13.45 6.2A5.75 5.75 0 1 0 13.4 9.9m.05-7.15V6.2H10" />
             </svg>
             <span id="refreshLabel" data-i18n="refresh">刷新</span>
           </button>
@@ -60,8 +60,6 @@
           <div class="account-list" id="unavailableList"></div>
         </details>
       </section>
-      <p class="account-notice hidden" id="desktopNotice" data-i18n="desktopUnknown" role="status">桌面端账号待确认</p>
-
       <span id="operationStatus" class="sr-only" role="status" aria-atomic="true"></span>
       <dialog id="feedbackDialog" aria-labelledby="feedbackTitle">
         <h2 id="feedbackTitle"></h2>

@@ -201,15 +201,8 @@
     return { label: summaries.join(" · "), detail: details.join("\n\n"), retryOnly, shortLabel };
   }
 
-  function desktopNeedsConfirmation(current) {
-    return current?.desktopRunning === true || current?.desktopStatus === "unknown";
-  }
-
   function renderDesktopMark(account) {
-    if (!account.isEligible || !account.savedDesktop) return "";
-    if (!account.activeDesktopKeychain) {
-      return `<span class="desktop-pending" title="${t("desktopUnknown")}">${t("desktopPendingShort")}</span>`;
-    }
+    if (!account.isEligible || !account.savedDesktop || !account.activeDesktopKeychain) return "";
     return `<button type="button" class="desktop-mark" id="desktop-${escapeHtml(account.email)}"
       data-action="saved-login-detail" data-email="${escapeHtml(account.email)}"
       aria-label="${t("desktopSaved")}" title="${t("desktopSaved")}">
@@ -318,12 +311,8 @@
     toast.textContent = error ? i18n.backend(error) : "";
     toast.classList.toggle("hidden", !error);
     if (state) currentState = state;
-    const cur = state?.current || {};
-
-    const desktopNotice = document.getElementById("desktopNotice");
     const allAccounts = Array.isArray(state?.accounts) ? state.accounts : [];
     const visibleAccounts = allAccounts.filter((account) => account.isEligible);
-    desktopNotice?.classList.toggle("hidden", Boolean(state?.error) || !desktopNeedsConfirmation(cur) || visibleAccounts.some(account => account.savedDesktop));
     const quotaGroups = visibleQuotaGroups(visibleAccounts);
     toolbarIssue = sharedQuotaIssue(visibleAccounts, quotaGroups);
     if (refreshResult?.warning) {

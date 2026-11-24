@@ -14,7 +14,6 @@
   --secondary: var(--magpie-fg-2, light-dark(#4b4b53, #b9b9c1));
   --muted: color-mix(in srgb, var(--secondary) 85%, var(--card));
   --border: var(--magpie-line, light-dark(#e3e3e8, #333339));
-  --control-border: color-mix(in srgb, var(--text) 52%, var(--card));
   --primary: var(--magpie-accent, light-dark(#4f46e5, #a5b4fc));
   --primary-fg: var(--magpie-accent-fg, light-dark(#fff, #14142a));
   --primary-soft: var(--magpie-accent-soft, light-dark(#eeedfd, #2b2c47));
@@ -85,21 +84,33 @@ body {
   letter-spacing: -0.01em;
 }
 
-.support-link {
-  appearance: none;
+.topbar .toolbar-action {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  min-height: 24px;
-  padding: 0 2px;
-  border: 0;
   border-radius: 6px;
+  border-color: transparent;
   background: transparent;
-  color: light-dark(var(--secondary), var(--magpie-muted, #8b8b94));
-  font: inherit;
+  box-shadow: none;
+  color: var(--secondary);
   font-size: 12px;
-  cursor: pointer;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.topbar .toolbar-action:hover:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--text) 5%, var(--bg));
+}
+
+.topbar .support-link {
+  padding-inline: 2px;
+  color: light-dark(
+    color-mix(in srgb, var(--secondary) 80%, var(--bg)),
+    color-mix(in srgb, var(--secondary) 66%, var(--bg))
+  );
+  transition: color 0.15s ease;
 }
 
 .toolbar-icon {
@@ -113,15 +124,10 @@ body {
   stroke-linejoin: round;
 }
 
-.support-link:hover:not(:disabled) {
-  color: var(--text);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.support-link:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
+.topbar .support-link:hover:not(:disabled),
+.topbar .support-link:focus-visible {
+  color: var(--secondary);
+  background: transparent;
 }
 
 .toolbar {
@@ -134,26 +140,9 @@ body {
   gap: 6px;
 }
 
-.toolbar .btn {
-  box-shadow: none;
-  border-color: transparent;
-  background: transparent;
-  color: var(--secondary);
-}
-
-.toolbar .btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text) 5%, var(--bg));
-}
-
 #btnToggleCli {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
   flex: none;
   padding-inline: 5px;
-  font-size: 11px;
-  font-weight: 600;
 }
 
 .cli-toggle-eye-off { display: none; }
@@ -162,12 +151,8 @@ body {
 #btnToggleCli[aria-pressed="false"] .cli-toggle-eye-off { display: initial; }
 
 #btnRefresh {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   flex: 1;
   min-width: 0;
-  gap: 5px;
 }
 
 #refreshLabel { overflow: hidden; text-overflow: ellipsis; }
@@ -226,17 +211,6 @@ body {
 .btn-primary:hover:not(:disabled) {
   opacity: 0.92;
   border-color: transparent;
-}
-
-.btn-ghost {
-  border-color: var(--control-border);
-  background: transparent;
-  color: var(--secondary);
-}
-
-.btn-ghost:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--card);
 }
 
 .btn-cli {
@@ -333,12 +307,6 @@ body {
 
 .desktop-mark:hover { background: var(--success-soft); }
 
-.desktop-pending {
-  flex: none;
-  color: var(--muted);
-  font-size: 11px;
-}
-
 .switch-status > span:last-child {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -393,12 +361,6 @@ body {
 
 .hidden {
   display: none !important;
-}
-
-.account-notice {
-  padding-inline: 2px;
-  color: var(--warning);
-  font-size: 12px;
 }
 
 .list-section {
@@ -834,7 +796,7 @@ summary:focus-visible {
   .topbar { grid-template-columns: minmax(0, 1fr) auto calc(7.2em + 48px); gap: 5px; }
   .quota-status { max-width: 4.7em; }
   .title-row { gap: 4px; }
-  .support-link { padding: 4px; }
+  .topbar .support-link { padding-inline: 4px; }
   .support-link span { display: none; }
   #btnRefresh { max-width: 100%; padding-inline: 2px; }
   .account-row { grid-template-columns: minmax(0, 1fr); }
@@ -845,7 +807,7 @@ summary:focus-visible {
 }
 @media (prefers-reduced-motion: reduce) {
   .btn,
-  .support-link {
+  .topbar .support-link {
     transition: none;
   }
 }

@@ -72,7 +72,7 @@ test("#5 legacy snapshot flags cannot mark a desktop session active or offer App
   const p = page(state), html = p.el("accountList").innerHTML;
   assert.doesNotMatch(accountRow(html, "old@example.test"), /tag-active">桌面端</);
   assert.match(accountRow(html, "next@example.test"), /tag tag-cli" title="[^"]+">CLI</);
-  assert.match(accountRow(html, "next@example.test"), /desktop-pending" title="桌面端账号待确认">待确认/);
+  assert.doesNotMatch(accountRow(html, "next@example.test"), /待确认|desktop-mark/);
   assert.doesNotMatch(html, /应用到桌面/);
   assert.doesNotMatch(accountRow(html, "next@example.test"), />桌面端待生效</);
   assert.doesNotMatch(accountRow(html, "next@example.test"), /tag-active">桌面端</);
@@ -80,20 +80,16 @@ test("#5 legacy snapshot flags cannot mark a desktop session active or offer App
   assert.doesNotMatch(html, /当前使用中|推荐|is-current/);
 });
 
-test("#5 page distinguishes unknown running identity from an offline saved login", () => {
+test("#5 page still marks a confirmed saved login when the desktop is closed", () => {
   const state = baseState();
-  state.current = { desktopRunning: true, desktopStatus: "unknown" };
-  const p = page(state);
-  assert.equal(p.el("desktopNotice").classList.contains("hidden"), false);
-  p.render({ ...state, current: { desktopSavedEmail: "saved@example.test", desktopStatus: "stopped" },
+  const p = page({ ...state, current: { desktopSavedEmail: "saved@example.test", desktopStatus: "stopped" },
     accounts: [{ email: "saved@example.test", savedDesktop: true, activeDesktopKeychain: true, isEligible: true }] });
   const html = p.el("accountList").innerHTML;
   assert.match(html, /account-email" title="saved@example.test">saved@example.test<\/span><button[^>]*class="desktop-mark"/);
   assert.doesNotMatch(html, /tag-active">桌面端</);
-  assert.equal(p.el("desktopNotice").classList.contains("hidden"), true);
 });
 
-test("an unverified desktop uses the identity area and keeps the regular switch actions", () => {
+test("an unverified desktop keeps the regular switch actions without a standing warning", () => {
   const email = "saved@example.test";
   const state = baseState();
   state.current = { desktopRunning: true, desktopStatus: "unknown", desktopSavedEmail: email };
@@ -102,11 +98,9 @@ test("an unverified desktop uses the identity area and keeps the regular switch 
     { email: "another@example.test", isEligible: true, hasCredentials: true }
   ];
   const p = page(state), html = p.el("accountList").innerHTML;
-  assert.match(accountRow(html, email), /account-email" title="saved@example.test">saved@example.test<\/span><span class="desktop-pending"/);
   assert.match(accountRow(html, email), /data-action="switch-all"/);
-  assert.doesNotMatch(accountRow(html, email), /action-apply|icon-check/);
+  assert.doesNotMatch(accountRow(html, email), /action-apply|icon-check|待确认/);
   assert.match(accountRow(html, "another@example.test"), /data-action="switch-all"/);
-  assert.equal(p.el("desktopNotice").classList.contains("hidden"), true);
 });
 
 test("the CLI-only control describes the shared login for recent local agy", () => {
@@ -511,6 +505,22 @@ test("a switch error replaces only the clicked button and opens the failure deta
   p.clickFeedback();
   assert.equal(p.el("feedbackTitle").textContent, "切换失败");
   assert.equal(p.el("feedbackBody").textContent, "测试失败详情");
+});
+
+test("a desktop reload warning is shown in the clicked switch button and opens its details", async () => {
+  const email = "target@example.test";
+  const state = { ...baseState(), accounts: [{ email, isEligible: true, hasCredentials: true }] };
+  const detail = "桌面端重载失败，请在 Antigravity 检查登录。";
+  const p = page(state, "zh", async cmd => ({
+    ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageWarning: true, pageMessage: detail }
+  }));
+  p.clickSwitch(email);
+  await new Promise(setImmediate);
+  const row = accountRow(p.el("accountList").innerHTML, email);
+  assert.doesNotMatch(row.split('class="account-actions"')[0], /待确认/);
+  assert.match(row, /id="switch-all-target@example.test" data-action="feedback-detail"\s+aria-label="桌面端待确认"/);
+  p.clickFeedback();
+  assert.equal(p.el("feedbackBody").textContent, detail);
 });
 
 test("shared failures with different histories list each date in details and recover independently of account errors", () => {
