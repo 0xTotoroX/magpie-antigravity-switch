@@ -9,7 +9,9 @@ function page(state, language = "zh-CN", send) {
   const elements = new Map();
   let click, toastTimer;
   class Element {
-    closest(selector) { return selector === "#btnRefresh" ? this : null; }
+    constructor(selector, attrs) { this.selector = selector; this.attrs = attrs; }
+    closest(selector) { return selector === this.selector ? this : null; }
+    getAttribute(name) { return this.attrs?.[name]; }
   }
   const document = {
     getElementById(id) {
@@ -43,7 +45,8 @@ function page(state, language = "zh-CN", send) {
   vm.runInContext(fs.readFileSync(path.join(project, "page/app.js"), "utf8"), context);
   return { el: id => document.getElementById(id), render: state => context.__AGY_SWITCH_ON_STATE__(state),
     setLanguage: (lang) => localeChanged({ lang }),
-    clickRefresh: () => click({ target: new Element() }),
+    clickRefresh: () => click({ target: new Element("#btnRefresh") }),
+    clickSwitch: (email, action = "switch-all") => click({ target: new Element("[data-action]", { "data-action": action, "data-email": email }) }),
     expireToast: () => toastTimer?.()
   };
 }
@@ -224,7 +227,7 @@ test("Carbon appears only for the windows supplied by an eligible account", () =
   assert.doesNotMatch(p.el("accountList").innerHTML, /Gemini 4 Carbon/);
 });
 
-test("the page follows Magpie language changes and keeps tier multipliers", () => {
+test("the page follows Magpie language changes and keeps tier multipliers", async () => {
   const state = baseState();
   state.accounts = [{
     email: "member@example.test", plan: "Google AI Ultra (20x)", isEligible: true, isPaid: true,
@@ -232,7 +235,7 @@ test("the page follows Magpie language changes and keeps tier multipliers", () =
     quota: { pools: [{ pool: "Gemini", window: "5 hours", remaining: 75,
       resetsAt: new Date(Date.now()+7200_000).toISOString() }] }
   }];
-  const p = page(state, "en-US");
+  const p = page(state, "en-US", async (cmd) => ({ ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: "已刷新" } }));
   assert.equal(p.el("refreshLabel").textContent, "Refresh");
   let html = p.el("accountList").innerHTML;
   assert.match(html, /Paid accounts/);
@@ -245,18 +248,14 @@ test("the page follows Magpie language changes and keeps tier multipliers", () =
   assert.match(html, /CLI only/);
   assert.doesNotMatch(html, /\p{Script=Han}/u);
 
-  p.render({ ...state, lastSwitch: { id: "refresh", message: "已同步 1 个账号，已刷新 1 个账号的额度", pageMessage: "已刷新", ok: true } });
-  assert.equal(p.el("toastBanner").textContent, "Refreshed");
+  await p.clickRefresh();
+  await new Promise(setImmediate);
+  assert.equal(p.el("refreshLabel").textContent, "Refreshed");
   p.setLanguage("zh-CN");
-  assert.equal(p.el("refreshLabel").textContent, "刷新");
+  assert.equal(p.el("refreshLabel").textContent, "已刷新");
   assert.match(p.el("accountList").innerHTML, /Magpie 首选/);
-  assert.equal(p.el("toastBanner").textContent, "已刷新");
   p.expireToast();
-  assert.equal(p.el("toastBanner").classList.contains("hidden"), true);
-  p.render({ ...state, lastSwitch: { id: "failed", pageMessage: "1 个账号刷新失败", ok: true, pageWarning: true } });
-  p.expireToast();
-  assert.equal(p.el("toastBanner").className, "toast is-error");
-  assert.equal(p.el("toastBanner").textContent, "1 个账号刷新失败");
+  assert.equal(p.el("refreshLabel").textContent, "刷新");
 });
 
 test("live and saved plan names share short labels in both languages", () => {
@@ -315,7 +314,7 @@ test("refresh stays busy across unrelated updates until its own result arrives",
   assert.equal(btn.getAttribute("aria-busy"), "false");
   assert.equal(btn.disabled, false);
   assert.equal(p.el("refreshLabel").textContent, "Refresh");
-  assert.equal(p.el("toastBanner").className, "toast is-error");
+  assert.equal(p.el("quotaStatus").title, "额度查询失败");
 });
 
 test("the quota timeout follows Magpie's language and keeps available readings visible", () => {
@@ -325,12 +324,13 @@ test("the quota timeout follows Magpie's language and keeps available readings v
     pools: [{ pool: "Gemini", window: "7 days", remaining: 72 }]
   } }];
   const p = page(state);
-  assert.match(p.el("accountList").innerHTML, /agy 额度查询超时 · 上次数据 更新时间未知/);
+  assert.match(p.el("quotaStatus").title, /agy 额度查询超时 · 上次数据 更新时间未知/);
+  assert.doesNotMatch(p.el("accountList").innerHTML, /额度查询超时|上次数据/);
   assert.match(p.el("accountList").innerHTML, /aria-valuenow="72"/);
 
   state.accounts[0].quota.refreshError = "context deadline exceeded";
   p.setLanguage("en");
-  assert.match(p.el("accountList").innerHTML, /The agy quota query timed out/);
+  assert.match(p.el("quotaStatus").title, /The agy quota query timed out/);
   assert.match(p.el("accountList").innerHTML, /aria-valuenow="72"/);
 });
 
@@ -360,9 +360,48 @@ test("a delayed older snapshot cannot replace the latest quota result", () => {
   const state = { ...baseState(), generatedAt: "2026-11-21T01:00:00.000Z" };
   const p = page(state);
   p.render({ ...state, generatedAt: "2026-11-21T01:00:02.000Z",
-    lastSwitch: { cmdId: "new", message: "new result", ok: true } });
+    accounts: [{ email: "new@example.test", isEligible: true }] });
   p.render({ ...state, generatedAt: "2026-11-21T01:00:01.000Z",
-    lastSwitch: { cmdId: "old", message: "old result", ok: false } });
-  assert.equal(p.el("toastBanner").textContent, "new result");
-  assert.equal(p.el("toastBanner").className, "toast is-ok");
+    accounts: [{ email: "old@example.test", isEligible: true }] });
+  assert.match(p.el("accountList").innerHTML, /new@example.test/);
+  assert.doesNotMatch(p.el("accountList").innerHTML, /old@example.test/);
+});
+
+test("switch feedback belongs to the clicked account and header count follows the main list", async () => {
+  const account = (email) => ({ email, isEligible: true, hasCredentials: true });
+  const state = { ...baseState(), accounts: [account("one@example.test"), account("two@example.test"), { email: "off@example.test" }] };
+  let complete;
+  const p = page(state, "zh", (cmd) => new Promise(resolve => {
+    complete = () => resolve({ ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: "已保存登录 · two@example.test · 桌面端重载中" } });
+  }));
+  p.clickSwitch("two@example.test");
+  const list = () => p.el("accountList").innerHTML;
+  assert.match(list(), />2 个账号</);
+  assert.match(accountRow(list(), "two@example.test"), /切换中/);
+  assert.doesNotMatch(accountRow(list(), "one@example.test"), /切换中/);
+  complete();
+  await new Promise(setImmediate);
+  assert.match(accountRow(list(), "two@example.test"), />桌面端重载中</);
+  assert.doesNotMatch(accountRow(list(), "one@example.test"), /重载中/);
+  assert.equal(p.el("refreshLabel").textContent, "刷新");
+  p.expireToast();
+  assert.doesNotMatch(list(), /桌面端重载中/);
+});
+
+test("shared failures with different histories list each date in details and recover independently of account errors", () => {
+  const row = (email, error, day) => ({ email, isEligible: true, quota: { refreshError: error,
+    updatedAt: `2026-11-${day}T13:33:00Z`, pools: [{pool:"Gemini", window:"7 days", remaining:42}] } });
+  const state = { ...baseState(), accounts: [row("a@example.test","context deadline exceeded",20),
+    row("b@example.test","agy usage query timed out.",21),row("c@example.test","登录已失效，请在 Magpie 重新登录",22)] };
+  const p = page(state);
+  const details = p.el("quotaStatus").title;
+  assert.equal(details.match(/agy 额度查询超时/g)?.length, 1);
+  assert.match(details, /2 个账号/);
+  assert.match(details, /a@example.test.*11.20/);
+  assert.match(details, /b@example.test.*11.21/);
+  assert.doesNotMatch(p.el("accountList").innerHTML, /额度查询超时/);
+  assert.match(accountRow(p.el("accountList").innerHTML,"c@example.test"), /登录已失效/);
+  p.render({ ...state, accounts: state.accounts.slice(2) });
+  assert.equal(p.el("quotaStatus").hidden, true);
+  assert.match(p.el("accountList").innerHTML, />1 个账号</);
 });

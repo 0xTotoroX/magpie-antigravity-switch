@@ -16,10 +16,12 @@
   const t = i18n.text;
 
   let currentState = globalThis.__AGY_SWITCH_STATE__ || null;
-  let lastHandledSwitchId = currentState?.lastSwitch?.cmdId || currentState?.lastSwitch?.id || null;
-  let pendingCommandType = null;
-  let lastToast = "";
-  let toastTimer;
+  let pendingCommand;
+  let trackedCommand;
+  let feedback;
+  let feedbackTimer;
+  let toolbarIssue;
+  let readError = "";
   let visibleListMarkup;
 
   function escapeHtml(str) {
@@ -30,24 +32,33 @@
       .replace(/"/g, "&quot;");
   }
 
-  function hideToast() {
-    clearTimeout(toastTimer);
-    lastToast = "";
-    document.getElementById("toastBanner")?.classList.add("hidden");
+  function openDetails(title, detail) {
+    document.getElementById("feedbackTitle").textContent = title;
+    document.getElementById("feedbackBody").textContent = detail;
+    document.getElementById("feedbackDialog").showModal();
   }
 
-  function showToast(message, isOk = true) {
-    const el = document.getElementById("toastBanner");
-    if (!el || !message) return;
-    clearTimeout(toastTimer);
-    lastToast = message;
-    el.textContent = i18n.backend(message).slice(0, 180);
-    el.className = `toast ${isOk ? "is-ok" : "is-error"}`;
-    if (isOk) toastTimer = setTimeout(hideToast, 4500);
+  function finishCommand(cmd, result) {
+    const warning = result.ok === false || Boolean(result.pageWarning);
+    const detail = result.pageMessage || result.message || "";
+    let label;
+    if (cmd.type === "refresh") {
+      label = result.ok === false ? "refreshFailed" : warning ? "partialFailure" : "refreshed";
+    } else if (cmd.type === "reload-desktop") {
+      label = warning ? "reloadFailed" : "reloading";
+    } else if (cmd.type === "switch") {
+      label = result.ok === false ? "switchFailed" : warning ? "desktopWarning" : cmd.target === "cli" ? "cliSaved" : "saved";
+    }
+    // 保留后台给出的桌面端实际状态，只去掉本行已有的账号名。
+    const prefix = `已保存登录 · ${cmd.email} · `;
+    const status = !warning && cmd.type === "switch" && detail.startsWith(prefix) ? detail.slice(prefix.length) : "";
+    feedback = { cmd, label, status, detail, warning };
+    clearTimeout(feedbackTimer);
+    if (!warning) feedbackTimer = setTimeout(() => { feedback = null; render(currentState); }, 4500);
   }
 
-  function showCommandResult(result) {
-    showToast(result.pageMessage ?? result.message, result.ok !== false && !result.pageWarning);
+  function feedbackLabel() {
+    return feedback.status ? i18n.backend(feedback.status) : feedback.label ? t(feedback.label) : i18n.backend(feedback.detail);
   }
 
   function fillClass(remaining) {
@@ -116,23 +127,25 @@
     </div>`;
   }
 
-  function renderQuotaHeader(quotaGroups) {
-    return `<div class="quota-header" aria-hidden="true"><span></span>
-      <div ${quotaGridAttributes(quotaGroups)}>${quotaGroups.map((group) => `<div class="quota-group">
+  function renderQuotaHeader(quotaGroups, count) {
+    return `<div class="quota-header"><span class="account-count">${i18n.accountCount(count)}</span>
+      <div ${quotaGridAttributes(quotaGroups)} aria-hidden="true">${quotaGroups.map((group) => `<div class="quota-group">
         <strong>${group.label}</strong>
         <div class="quota-windows ${group.windows.length === 1 ? "is-single" : ""}">${group.windows.map((window) => `<span>${periodLabel(window)}</span>`).join("")}</div>
       </div>`).join("")}</div><span></span></div>`;
   }
 
-  function quotaNotice(quota, quotaGroups) {
-    if (!quota) return "";
-    const error = quota.error || quota.refreshError;
-    if (!error && !quota.previousReading) return "";
-    const reason = error === "Magpie 未能刷新这个账号的额度" ? t("refreshFailed") : i18n.backend(error);
+  function systemQuotaReason(error) {
+    if (/^(?:agy usage query timed out\.?|context deadline exceeded|agy 额度查询超时|Magpie 额度刷新超时)$/i.test(error || "")) return t("quotaQueryTimeout");
+    if (error === "找不到 Magpie 命令，无法刷新额度") return i18n.backend(error);
+    return "";
+  }
+
+  function previousReading(quota, quotaGroups) {
     const hasReading = !quota.error && quota.pools?.some((pool) =>
       Number.isFinite(pool.remaining) && !isStale(pool) &&
       quotaGroups.some((group) => group.pool === pool.pool && group.windows.includes(pool.window)));
-    if (!hasReading) return reason;
+    if (!hasReading) return "";
 
     const date = new Date(quota.updatedAt ?? NaN);
     const updated = Number.isFinite(date.getTime())
@@ -141,7 +154,39 @@
         month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
       }).format(date).replace(", ", " ")
       : t("timeUnknown");
-    return [reason, `${t("previousReading")} ${updated}`].filter(Boolean).join(" · ");
+    return `${t("previousReading")} ${updated}`;
+  }
+
+  function quotaNotice(quota, quotaGroups) {
+    if (!quota) return "";
+    const error = quota.error || quota.refreshError;
+    if (systemQuotaReason(error) || (!error && !quota.previousReading)) return "";
+    const reason = error === "Magpie 未能刷新这个账号的额度" ? t("refreshFailed") : i18n.backend(error);
+    return [reason, previousReading(quota, quotaGroups)].filter(Boolean).join(" · ");
+  }
+
+  function sharedQuotaIssue(accounts, quotaGroups) {
+    const groups = new Map();
+    for (const { email, quota } of accounts) {
+      const reason = systemQuotaReason(quota?.error || quota?.refreshError);
+      if (!reason) continue;
+      if (!groups.has(reason)) groups.set(reason, []);
+      groups.get(reason).push({ email, previous: previousReading(quota, quotaGroups) });
+    }
+    if (!groups.size) return null;
+    const summaries = [];
+    const details = [];
+    for (const [reason, rows] of groups) {
+      const all = rows.length === accounts.length;
+      const same = rows.every((row) => row.previous === rows[0].previous);
+      const scope = all ? "" : i18n.accountCount(rows.length);
+      const history = same ? rows[0].previous : rows.some((row) => row.previous) ? t("previousReading") : "";
+      const summary = [reason, scope, history].filter(Boolean).join(" · ");
+      summaries.push(summary);
+      const affected = rows.map(({ email, previous }) => [email, !same && previous].filter(Boolean).join(" · "));
+      details.push(all && same ? summary : summary + "\n" + affected.join("\n"));
+    }
+    return { label: summaries.join(" · "), detail: details.join("\n\n") };
   }
 
   function renderAccountRow(account, quotaGroups = QUOTA_GROUPS) {
@@ -158,7 +203,7 @@
     const quotaIssue = account.isEligible ? quotaNotice(account.quota, quotaGroups) : "";
 
     const canSwitch = account.hasCredentials && account.isEligible;
-    const disabled = pendingCommandType !== null || Boolean(currentState?.error);
+    const disabled = Boolean(pendingCommand) || Boolean(currentState?.error);
     const cliSwitchHint = currentState?.current?.cliUsesSharedLogin
       ? t("cliShared")
       : t("cliNext");
@@ -167,7 +212,7 @@
     if (canSwitch) {
       if (isCurrentAll || account.pendingDesktop) {
         actionButtons = `
-          <button type="button" class="btn btn-ghost" data-action="reload-desktop" ${disabled ? "disabled" : ""}>
+          <button type="button" class="btn btn-ghost" data-action="reload-desktop" data-email="${escapeHtml(account.email)}" ${disabled ? "disabled" : ""}>
             ${t(account.pendingDesktop ? "activateDesktop" : "refreshDesktop")}
           </button>
         `;
@@ -183,6 +228,17 @@
       }
     }
 
+    const busy = pendingCommand?.email === account.email && pendingCommand;
+    const result = feedback?.cmd.email === account.email && feedback;
+    if (busy) {
+      actionButtons = `<span class="action-feedback" aria-busy="true">${t(busy.type === "reload-desktop" ? "reloading" : "switching")}</span>`;
+    } else if (result) {
+      const label = escapeHtml(feedbackLabel());
+      actionButtons = result.warning
+        ? `<button type="button" class="btn feedback-warning" data-action="feedback-detail" title="${escapeHtml(i18n.backend(result.detail))}">${label} ⓘ</button>`
+        : `<span class="action-feedback" title="${escapeHtml(i18n.backend(result.detail))}">${label}</span>`;
+    }
+
     return `
       <div class="account-row">
         <div class="account-main">
@@ -196,27 +252,30 @@
         ${renderQuotaGrid(account, quotaGroups)}
         <div class="account-actions">
           ${actionButtons}
-          ${account.pendingDesktop ? `<span class="desktop-pending">${t("desktopPending")}</span>` : ""}
+          ${account.pendingDesktop && !busy && !result ? `<span class="desktop-pending">${t("desktopPending")}</span>` : ""}
         </div>
       </div>
     `;
   }
 
-  function renderAccountGroups(accounts) {
+  function visibleQuotaGroups(accounts) {
     const carbonWindows = CARBON_GROUP.windows.filter((window) => accounts.some(({ quota }) =>
       !quota?.error && !quota?.refreshError && !quota?.previousReading && quota?.pools?.some((pool) =>
         pool.pool === CARBON_GROUP.pool && pool.window === window &&
         Number.isFinite(pool.remaining) && !isStale(pool))));
-    const quotaGroups = carbonWindows.length
+    return carbonWindows.length
       ? [QUOTA_GROUPS[0], { ...CARBON_GROUP, windows: carbonWindows }, QUOTA_GROUPS[1]]
       : QUOTA_GROUPS;
+  }
+
+  function renderAccountGroups(accounts, quotaGroups) {
     const groups = [
       { label: t("members"), matches: (a) => a.isEligible && (a.isPaid ?? a.isPro) },
       { label: t("freeAccounts"), matches: (a) => a.isEligible && !(a.isPaid ?? a.isPro) && a.isFree },
       { label: t("planUnknown"), matches: (a) => a.isEligible && !(a.isPaid ?? a.isPro) && !a.isFree },
       { label: t("unavailableAccounts"), matches: (a) => !a.isEligible }
     ];
-    return renderQuotaHeader(quotaGroups) + groups.map((group) => {
+    return renderQuotaHeader(quotaGroups, accounts.length) + groups.map((group) => {
       const rows = accounts.filter(group.matches);
       return rows.length ? `<section class="account-group" aria-label="${group.label}">
         <h2>${group.label}<span>${rows.length}</span></h2>
@@ -226,31 +285,53 @@
   }
 
   function render(state) {
+    const refreshing = pendingCommand?.type === "refresh";
     const btnRefresh = document.getElementById("btnRefresh");
-    if (btnRefresh) {
-      const isRefreshing = pendingCommandType === "refresh";
-      btnRefresh.disabled = pendingCommandType !== null;
-      btnRefresh.setAttribute("aria-busy", String(isRefreshing));
-      document.getElementById("refreshLabel").textContent = t(isRefreshing ? "refreshing" : "refresh");
-    }
+    btnRefresh.disabled = Boolean(pendingCommand);
+    btnRefresh.setAttribute("aria-busy", String(refreshing));
+    const refreshResult = feedback?.cmd.type === "refresh" && feedback;
+    document.getElementById("refreshLabel").textContent = t(refreshing ? "refreshing" : refreshResult && !refreshResult.warning ? "refreshed" : "refresh");
+    document.getElementById("btnGitHubStar").disabled = Boolean(pendingCommand);
 
-    if (!state) return;
-    const hadStateError = Boolean(currentState?.error);
-    currentState = state;
-    if (state.error) showToast(state.error, false);
-    else if (hadStateError) hideToast();
-
-    const cur = state.current || {};
+    const error = state?.error || readError || (feedback?.cmd.type === "open-github" && feedback.warning && feedback.detail);
+    const toast = document.getElementById("toastBanner");
+    toast.textContent = error ? i18n.backend(error) : "";
+    toast.classList.toggle("hidden", !error);
+    if (state) currentState = state;
+    const cur = state?.current || {};
 
     const desktopNotice = document.getElementById("desktopNotice");
-    const allAccounts = Array.isArray(state.accounts) ? state.accounts : [];
+    const allAccounts = Array.isArray(state?.accounts) ? state.accounts : [];
     const visibleAccounts = allAccounts.filter((account) => account.isEligible);
-    desktopNotice?.classList.toggle("hidden", Boolean(state.error) || cur.desktopStatus !== "unknown" || visibleAccounts.some((a) => a.pendingDesktop));
+    desktopNotice?.classList.toggle("hidden", Boolean(state?.error) || cur.desktopStatus !== "unknown" || visibleAccounts.some((a) => a.pendingDesktop));
+    const quotaGroups = visibleQuotaGroups(visibleAccounts);
+    toolbarIssue = sharedQuotaIssue(visibleAccounts, quotaGroups);
+    if (refreshResult?.warning) {
+      const detail = i18n.backend(refreshResult.detail);
+      if (!toolbarIssue) toolbarIssue = { label: feedbackLabel(), detail };
+      else if (refreshResult.label === "refreshFailed" && !toolbarIssue.detail.includes(detail)) {
+        toolbarIssue.detail = detail + "\n\n" + toolbarIssue.detail;
+      }
+    }
+    const issueButton = document.getElementById("quotaStatus");
+    issueButton.hidden = !toolbarIssue;
+    issueButton.innerHTML = toolbarIssue
+      ? `<span class="issue-long">${escapeHtml(toolbarIssue.label)}</span><span class="issue-short">${escapeHtml(toolbarIssue.label.includes(t("previousReading")) ? t("previousReading") : t("quotaProblem"))}</span>`
+      : "";
+    issueButton.title = toolbarIssue?.detail || "";
+    issueButton.setAttribute("aria-label", issueButton.title);
+    const status = pendingCommand?.email ? t(pendingCommand.type === "reload-desktop" ? "reloading" : "switching")
+      : refreshing ? t("refreshing") : feedback?.label ? feedbackLabel() : "";
+    const announcement = [pendingCommand?.email || feedback?.cmd.email, status].filter(Boolean).join(" · ");
+    const live = document.getElementById("operationStatus");
+    if (live.textContent !== announcement) live.textContent = announcement;
+
+    if (!state) return;
     const inactiveAccounts = allAccounts.filter((account) => !account.isEligible);
 
     const listEl = document.getElementById("accountList");
     if (listEl) {
-      const markup = visibleAccounts.length ? renderAccountGroups(visibleAccounts)
+      const markup = visibleAccounts.length ? renderAccountGroups(visibleAccounts, quotaGroups)
         : `<div class="account-empty-state">${t(allAccounts.length ? "noAvailable" : "noAccounts")}</div>`;
       if (markup !== visibleListMarkup) {
         listEl.innerHTML = markup;
@@ -265,18 +346,16 @@
       document.getElementById("unavailableList").innerHTML = inactiveAccounts
         .map((account) => renderAccountRow(account)).join("");
     }
-
-    const incomingSwitchId = state.lastSwitch?.cmdId || state.lastSwitch?.id || null;
-    if (!state.error && incomingSwitchId && incomingSwitchId !== lastHandledSwitchId) {
-      lastHandledSwitchId = incomingSwitchId;
-      showCommandResult(state.lastSwitch);
-    }
   }
 
   function receiveState(state) {
-    if (!state || (state.generatedAt && state === currentState)) return;
+    if (!state) return;
     if (state.generatedAt && currentState?.generatedAt && state.generatedAt < currentState.generatedAt) return;
-    if (!currentState && !pendingCommandType) lastHandledSwitchId = state.lastSwitch?.cmdId || state.lastSwitch?.id || null;
+    readError = "";
+    if (trackedCommand && state.lastSwitch?.cmdId === trackedCommand.id) {
+      finishCommand(trackedCommand, state.lastSwitch);
+      trackedCommand = null;
+    }
     render(state);
   }
 
@@ -284,32 +363,38 @@
     try {
       receiveState(await globalThis.agyPage.state());
     } catch (err) {
-      if (!currentState || err.message === t("reopen")) showToast(t("commandFailed") + i18n.separator() + err.message, false);
+      if (!currentState || err.message === t("reopen")) {
+        readError = err.message;
+        render(currentState);
+      }
     }
   }
 
   async function sendPluginCommand(cmdPayload) {
-    if (pendingCommandType !== null) return;
+    if (pendingCommand) return;
     const cmdId = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const fullCmd = { ...cmdPayload, id: cmdId, ts: Date.now(), language: i18n.locale() };
 
-    pendingCommandType = cmdPayload.type;
-    const isRefreshing = pendingCommandType === "refresh";
-    if (isRefreshing) hideToast();
+    pendingCommand = fullCmd;
+    trackedCommand = fullCmd;
+    clearTimeout(feedbackTimer);
+    feedback = null;
     render(currentState);
-
     try {
       const state = await globalThis.agyPage.command(fullCmd);
+      if (state?.lastSwitch?.cmdId !== cmdId) throw Error(t("commandTimeout"));
+      if (trackedCommand) {
+        finishCommand(fullCmd, state.lastSwitch);
+        trackedCommand = null;
+      }
       receiveState(state);
-      const result = state?.lastSwitch;
-      if (result?.cmdId !== cmdId) throw Error(t("commandTimeout"));
-      if (lastHandledSwitchId !== cmdId) showCommandResult(result);
     } catch (err) {
-      const message = err.name === "TimeoutError" ? t(isRefreshing ? "refreshTimeout" : "commandTimeout")
-        : `${t("commandFailed")}${i18n.separator()}${err.message || err}`;
-      showToast(message, false);
+      if (trackedCommand) {
+        const detail = err.name === "TimeoutError" ? t(fullCmd.type === "refresh" ? "refreshTimeout" : "commandTimeout") : err.message;
+        finishCommand(fullCmd, { ok: false, message: detail });
+      }
     } finally {
-      pendingCommandType = null;
+      pendingCommand = null;
       render(currentState);
     }
   }
@@ -318,6 +403,20 @@
     const target = ev.target instanceof Element ? ev.target : null;
     if (!target) return;
 
+    if (target.closest("#closeFeedback")) {
+      document.getElementById("feedbackDialog").close();
+      return;
+    }
+    if (target.closest("#quotaStatus") && toolbarIssue) {
+      openDetails(t("quota"), toolbarIssue.detail);
+      return;
+    }
+    if (target.closest('[data-action="feedback-detail"]') && feedback) {
+      openDetails(feedbackLabel(), i18n.backend(feedback.detail));
+      feedback = null;
+      render(currentState);
+      return;
+    }
     if (target.closest("#btnGitHubStar")) {
       sendPluginCommand({ type: "open-github" });
       return;
@@ -352,7 +451,7 @@
       });
     } else if (action === "reload-desktop") {
       sendPluginCommand({
-        type: "reload-desktop"
+        type: "reload-desktop", email
       });
     }
   });
@@ -363,10 +462,6 @@
     if (!value || !i18n.setLanguage(value)) return;
     i18n.apply();
     render(currentState);
-    const toast = document.getElementById("toastBanner");
-    if (lastToast && toast && !toast.classList.contains("hidden")) {
-      toast.textContent = i18n.backend(lastToast).slice(0, 180);
-    }
   }
 
   const magpie = globalThis.magpie;

@@ -15,7 +15,7 @@
             <h1>Antigravity Switch</h1>
             <button
               type="button"
-              class="github-star-badge"
+              class="support-link"
               id="btnGitHubStar"
               title="打开 GitHub 仓库并点亮 Star 支持项目" data-i18n-title="supportTitle"
               aria-label="前往 GitHub 仓库点亮 Star 支持项目" data-i18n-label="supportTitle"
@@ -33,6 +33,7 @@
             </button>
           </div>
         </div>
+        <button type="button" id="quotaStatus" class="quota-status" hidden></button>
         <div class="toolbar">
           <button type="button" class="btn btn-ghost" id="btnRefresh">
             <svg class="refresh-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -46,8 +47,6 @@
 
       <div class="toast hidden" id="toastBanner" role="status"></div>
 
-      <p class="account-notice hidden" id="desktopNotice" data-i18n="desktopUnknown" role="status">桌面端账号待确认</p>
-
       <section class="list-section">
         <div class="account-list" id="accountList">
           <div class="account-empty-state" data-i18n="loading">正在读取账号…</div>
@@ -57,6 +56,14 @@
           <div class="account-list" id="unavailableList"></div>
         </details>
       </section>
+      <p class="account-notice hidden" id="desktopNotice" data-i18n="desktopUnknown" role="status">桌面端账号待确认</p>
+
+      <span id="operationStatus" class="sr-only" role="status" aria-atomic="true"></span>
+      <dialog id="feedbackDialog" aria-labelledby="feedbackTitle">
+        <h2 id="feedbackTitle"></h2>
+        <p id="feedbackBody"></p>
+        <button type="button" id="closeFeedback" class="btn" autofocus data-i18n="close">关闭</button>
+      </dialog>
     </main>
 
     <script src="i18n.js"></script>

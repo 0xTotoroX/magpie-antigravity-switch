@@ -60,11 +60,10 @@ body {
 }
 
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 7.8em;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .title-row {
@@ -80,14 +79,14 @@ body {
   letter-spacing: -0.01em;
 }
 
-.github-star-badge {
+.support-link {
   appearance: none;
   display: inline-flex;
   align-items: center;
   gap: 5px;
   min-height: 24px;
-  padding: 0 8px;
-  border: 1px solid light-dark(#c4c4c4, #474747);
+  padding: 0 2px;
+  border: 0;
   border-radius: 6px;
   background: transparent;
   color: light-dark(var(--secondary), var(--magpie-muted, #8b8b94));
@@ -97,23 +96,26 @@ body {
   transition: color 0.15s ease, background-color 0.15s ease;
 }
 
-.github-star-badge svg {
+.support-link svg {
   width: 12px;
   height: 12px;
   flex-shrink: 0;
 }
 
-.github-star-badge:hover:not(:disabled) {
-  color: light-dark(var(--text), var(--secondary));
-  background: var(--card);
+.support-link:hover:not(:disabled) {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
-.github-star-badge:focus-visible {
+.support-link:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
 .toolbar {
+  grid-column: 3;
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -226,27 +228,73 @@ body {
   font-size: 12px;
 }
 
+.quota-status {
+  grid-column: 2;
+  justify-self: end;
+  max-width: 100%;
+  min-width: 0;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--warning);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.issue-short { display: none; }
+.quota-status:hover { text-decoration: underline; }
+.quota-status:focus-visible { outline: 2px solid var(--primary); }
+
 .toast {
+  position: fixed;
+  z-index: 2;
+  inset: auto 12px 12px;
+  width: fit-content;
+  max-width: min(36rem, calc(100% - 24px));
+  margin: auto;
   padding: 9px 13px;
-  border-radius: 9px;
-  font-size: 12.5px;
-  font-weight: 500;
-  border: 1px solid var(--border);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
   background: var(--card);
-  word-break: break-word;
+  color: var(--danger-ink);
   overflow-wrap: anywhere;
 }
 
-.toast.is-ok {
-  background: var(--success-soft);
-  color: var(--success-ink);
-  border-color: color-mix(in srgb, var(--success) 35%, var(--card));
+#feedbackDialog {
+  inset: 0;
+  margin: auto;
+  width: min(360px, calc(100% - 32px));
+  max-height: 75vh;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--surface-radius);
+  color: var(--text);
+  background: var(--card);
 }
+#feedbackDialog::backdrop { background: rgb(0 0 0 / 25%); }
+#feedbackDialog h2 { font-size: 14px; }
+#feedbackBody { margin-block: 8px 14px; white-space: pre-line; overflow-wrap: anywhere; }
+#closeFeedback { display: block; margin-inline-start: auto; }
 
-.toast.is-error {
-  background: var(--danger-soft);
-  color: var(--danger-ink);
-  border-color: color-mix(in srgb, var(--danger) 35%, var(--card));
+.action-feedback, .feedback-warning {
+  display: block;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 28px;
+  color: var(--secondary);
+}
+.feedback-warning {
+  padding-block: 0;
+  background: transparent;
+  border-color: var(--border);
+  color: var(--warning);
 }
 
 .hidden {
@@ -320,6 +368,7 @@ body {
 }
 
 /* 套餐写在账号行内，分组标题保留给辅助技术。 */
+.sr-only,
 .account-group > h2 {
   position: absolute;
   width: 1px;
@@ -659,6 +708,19 @@ summary:focus-visible {
 }
 
 @media (max-width: 440px) {
+  .topbar { grid-template-columns: minmax(0, 1fr) 4.7em 68px; gap: 5px; }
+  .title-row { gap: 4px; flex-wrap: nowrap; }
+  .title-block h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .support-link { padding: 4px; }
+  .support-link span { display: none; }
+  #btnRefresh { max-width: 100%; padding-inline: 2px; }
+  #refreshLabel { overflow: hidden; text-overflow: ellipsis; }
+  .toolbar { max-width: 100%; }
+  .quota-status { text-align: end; }
+  .issue-long { display: none; }
+  .issue-short { display: inline; }
+  .quota-status[hidden] { display: none; }
+
   .account-row { grid-template-columns: minmax(0, 1fr); }
   .account-actions {
     grid-area: auto;
@@ -672,7 +734,7 @@ summary:focus-visible {
 }
 @media (prefers-reduced-motion: reduce) {
   .btn,
-  .github-star-badge {
+  .support-link {
     transition: none;
   }
 }

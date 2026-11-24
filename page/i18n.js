@@ -1,6 +1,6 @@
 /**
  * [INPUT]: Magpie 主题语言与页面、后台状态文案。
- * [OUTPUT]: 中英文文案、历史套餐标记、读数时间与常见后台反馈翻译。
+ * [OUTPUT]: 中英文文案、操作反馈、读数时间与常见后台反馈翻译。
  * [POS]: Magpie 沙箱中的经典脚本，必须先于 app.js 加载。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -8,6 +8,17 @@
   const messages = {
     support: ["支持", "Support"],
     supportTitle: ["打开 GitHub 仓库并点亮 Star 支持项目", "Open the GitHub repository and star the project"],
+    close: ["关闭", "Close"],
+    switching: ["切换中…", "Switching…"],
+    reloading: ["重载中…", "Reloading…"],
+    saved: ["登录已保存", "Sign-in saved"],
+    cliSaved: ["CLI 已切换", "CLI switched"],
+    switchFailed: ["切换失败", "Switch failed"],
+    reloadFailed: ["重载未完成", "Reload incomplete"],
+    desktopWarning: ["桌面端待确认", "Check Desktop"],
+    refreshed: ["已刷新", "Refreshed"],
+    partialFailure: ["部分失败", "Partial failure"],
+    quotaProblem: ["额度异常", "Quota issue"],
     refresh: ["刷新", "Refresh"],
     refreshing: ["刷新中…", "Refreshing…"],
     loading: ["正在读取账号…", "Loading accounts…"],
@@ -146,13 +157,15 @@
     return lang === "en" ? `in ${value}${en}` : `${value}${zh}后`;
   }
 
+  const accountCount = (n) => lang === "en" ? `${n} account${n === 1 ? "" : "s"}` : `${n} 个账号`;
+
   const stateLabel = (label) => {
     const known = { "不可用": "unavailable", "已停用": "disabled", "套餐未知": "planUnknown" };
     return Object.hasOwn(known, label) ? text(known[label]) : label;
   };
 
   globalThis.agySwitchI18n = {
-    setLanguage, apply, text, backend, reset, stateLabel, locale: () => lang,
+    setLanguage, apply, text, backend, reset, accountCount, stateLabel, locale: () => lang,
     separator: () => lang === "en" ? ": " : "："
   };
 })();
