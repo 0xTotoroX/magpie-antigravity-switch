@@ -279,8 +279,7 @@ body {
 #feedbackBody { margin-block: 8px 14px; white-space: pre-line; overflow-wrap: anywhere; }
 #closeFeedback { display: block; margin-inline-start: auto; }
 
-.action-feedback,
-.action-apply {
+.action-feedback {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -288,9 +287,6 @@ body {
   max-width: 100%;
   white-space: nowrap;
   font-size: 12px;
-}
-
-.action-feedback {
   color: var(--secondary);
   padding-inline: 7px;
 }
@@ -298,11 +294,6 @@ body {
 .action-feedback > span:last-child {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.action-apply {
-  padding-inline: 8px;
-  border-color: var(--border);
 }
 
 .action-icon {

@@ -18,8 +18,8 @@ macOS 上的 Magpie 页面插件与 CLI，使用 JavaScript ES modules、Node.js
 
 - 真实凭据、备份、`page/.runtime/` 与旧版 `page/state.js` 不提交到 Git。写回账号配置前必须严格解析；只允许缺失文件使用默认值。
 - 钥匙串更新不删除原条目，不使用 `-A`。已有条目保留访问权限，只在新建条目时设置有限的可信应用；不要每次切号重复提交 `-T`。需要 macOS 授权时遵循系统提示，不通过降低访问保护绕过。
-- `current.desktopRuntimeEmail` 是已查询到的运行身份；`desktopSavedEmail` 是保存的凭据身份。`desktopPending` 不等于切换已完成，查询失败不猜测运行身份。
-- 套餐与配额通过 Magpie 的 `quota refresh agy-cli` 与本地配额缓存读取；本地 desktop `language_server` 只确认当前运行账号，不使用旧保险库的 `plan` / `liveQuota` 分类或补额度。旧资料保留。同池推荐分数取各有效窗口的最小剩余量，缺失与过期读数不补满。
+- 桌面运行状态按主程序的可执行文件名识别，保存的账号取自 `desktopSavedEmail`。无法检查进程时保留未知状态。快照为旧调用方保留 `desktopRuntimeEmail: null` 与 `desktopPending: false`。
+- 套餐与配额通过 Magpie 的 `quota refresh agy-cli` 与本地配额缓存读取；不使用旧保险库的 `plan` / `liveQuota` 分类或补额度。旧资料保留。同池推荐分数取各有效窗口的最小剩余量，缺失与过期读数不补满。
 - 页面按会员、免费与套餐未知分组，不可用账号默认折叠。额度从左到右展示 Gemini、按需出现的 Carbon 和 GPT / Claude；常规窗口为 5h、7d，Gemini 4 Carbon 仅展示有有效独立读数的窗口。Argon 旧数据不计入配额投影和推荐。缺失保留列位，视觉用「—」，辅助技术仍读为未知。页面简写已知套餐名并保留 Ultra 倍数，agy-cli 缺失套餐名时可按邮箱使用 Magpie 保存的 Antigravity 登录套餐；明确识别 Pro、Ultra 和 Enterprise，只有已识别免费套餐计入免费版。未知名称不自动纳管。`isPro`、`counts.pro` 和 `onlyPro` 为旧版本兼容字段，会员判断使用 `isPaid`。
 - `npm test` 是隔离回归验证；真实账号切换与系统授权交互需另外说明实际验证范围。
 - README 和公开 Release 只写用户需要的功能、安装与兼容说明；个人开发、本机版本和验收过程留在私有 Runbook。

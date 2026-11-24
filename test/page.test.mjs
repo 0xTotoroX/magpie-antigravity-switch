@@ -57,19 +57,20 @@ function accountRow(html, email) {
   return html.split('<div class="account-row">').find((row) => row.startsWith("\n") && row.includes(`class="account-email">${email}</span>`)) || "";
 }
 
-test("#5 page labels the running desktop and pending login on their own rows", () => {
+test("#5 legacy snapshot flags cannot mark a desktop session active or offer Apply", () => {
   const state = baseState();
   state.current = { desktopEmail: "old@example.test", desktopSavedEmail: "next@example.test", desktopRunning: true, desktopPending: true };
   state.accounts = [
     { email: "old@example.test", activeDesktop: true, hasCredentials: true, isEligible: true, isPaid: true },
-    { email: "next@example.test", pendingDesktop: true, activeCli: true, hasCredentials: true, isEligible: true, isPaid: false },
+    { email: "next@example.test", pendingDesktop: true, savedDesktop: true, activeCli: true, hasCredentials: true, isEligible: true, isPaid: false },
     { email: "magpie@example.test", activeMagpieFirst: true, hasCredentials: true, isEligible: true, isPaid: false }
   ];
   state.recommendedEmail = "next@example.test";
   const p = page(state), html = p.el("accountList").innerHTML;
-  assert.match(accountRow(html, "old@example.test"), /tag-active">桌面端</);
+  assert.doesNotMatch(accountRow(html, "old@example.test"), /tag-active">桌面端</);
   assert.match(accountRow(html, "next@example.test"), /cli-status">CLI</);
-  assert.match(accountRow(html, "next@example.test"), /aria-label="应用到桌面 · 桌面端待生效"/);
+  assert.match(accountRow(html, "next@example.test"), /role="status">桌面端账号待确认/);
+  assert.doesNotMatch(html, /应用到桌面/);
   assert.doesNotMatch(accountRow(html, "next@example.test"), />桌面端待生效</);
   assert.doesNotMatch(accountRow(html, "next@example.test"), /tag-active">桌面端</);
   assert.match(accountRow(html, "magpie@example.test"), /tag-active">Magpie 首选</);
@@ -247,7 +248,7 @@ test("the page follows Magpie language changes and keeps tier multipliers", asyn
   const state = baseState();
   state.accounts = [{
     email: "member@example.test", plan: "Google AI Ultra (20x)", isEligible: true, isPaid: true,
-    hasCredentials: true, activeDesktop: true, activeMagpieFirst: true,
+    hasCredentials: true, activeMagpieFirst: true,
     quota: { pools: [{ pool: "Gemini", window: "5 hours", remaining: 75,
       resetsAt: new Date(Date.now()+7200_000).toISOString() }] }
   }];
@@ -416,19 +417,20 @@ test("switch feedback belongs to the clicked account and header count follows th
   assert.doesNotMatch(list(), /桌面端重载中/);
 });
 
-test("a pending desktop offers Apply immediately while a CLI-only success confirms just CLI", async () => {
+test("unverified switch feedback stays in the target row and a CLI-only success confirms just CLI", async () => {
   const email = "target@example.test";
   const account = { email, isEligible: true, hasCredentials: true };
   const state = { ...baseState(), accounts: [account] };
   const p = page(state, "zh", async (cmd) => ({
-    ...state, accounts: [{ ...account, activeCli: true, savedDesktop: true, pendingDesktop: true }],
-    lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: `已保存登录 · ${email} · 桌面端待生效` }
+    ...state, current: { desktopRunning: true }, accounts: [{ ...account, activeCli: true, savedDesktop: true }],
+    lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: `已保存登录 · ${email} · 桌面端账号待确认` }
   }));
   p.clickSwitch(email);
   await new Promise(setImmediate);
   const pending = accountRow(p.el("accountList").innerHTML, email);
-  assert.match(pending, /class="btn btn-ghost action-apply"/);
-  assert.doesNotMatch(pending, /icon-check|>桌面端待生效</);
+  assert.match(pending, /icon-clock/);
+  assert.match(pending, />桌面端账号待确认</);
+  assert.doesNotMatch(pending, /icon-check|应用到桌面/);
   const cli = page(state, "en", async cmd => ({
     ...state, lastSwitch: { cmdId: cmd.id, ok: true, pageMessage: `新启动的 CLI 将使用 ${email}` }
   }));

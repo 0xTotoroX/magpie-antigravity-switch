@@ -14,11 +14,6 @@ export const login = (email, plan = "Google AI Pro") => ({
   agent: "antigravity", user: email, on: true, plan, project: "fixture-project",
   auth: { access_token: "fixture-access", refresh_token: "fixture-refresh", expiry_date: Date.now() + 86400_000 }
 });
-export const live = (email, remaining = 0, plan = "Google AI Pro") => ({
-  email, userTier: plan ? { name: plan } : {}, cascadeModelConfigData: {
-    clientModelConfigs: [{ label: "Claude", quotaInfo: { remainingFraction: remaining / 100, resetTime: future() } }]
-  }
-});
 export const quota = (c5, c7, at = Date.now()) => ({ at, quota: { plan: "Google AI Pro", windows: [
   { pool: "Claude & GPT", name: "5 hours", used: 100 - c5, resetsAt: future() },
   { pool: "Claude & GPT", name: "7 days", used: 100 - c7, resetsAt: future() },
@@ -86,15 +81,14 @@ export async function fixture(options = {}) {
         }
       }
       if (cmd === "agy" && args[0] === "--version" && options.agyVersion) return options.agyVersion;
-      if (cmd === "ps") return options.fakeProcessList ?? ((options.liveStatus || options.running)
-        ? "4242 /Applications/Antigravity.app/Contents/Resources/bin/language_server" +
-          (args.includes("pid=,args=") ? " --csrf_token abc-def" : "") : "");
-      if (cmd === "lsof") return "server 4242 fixture TCP 127.0.0.1:40001 (LISTEN)";
-      if (cmd === "open") return "";
-      if (cmd === "curl") {
-        if (!options.liveStatus) throw new Error("fixture live status unavailable");
-        return JSON.stringify({ userStatus: options.liveStatus });
+      if (cmd === "ps") {
+        if (options.denyProcessRead) throw new Error("Process list unavailable");
+        if (options.fakeProcessList !== undefined) return options.fakeProcessList;
+        if (!options.running) return "";
+        const main = "4210 /Applications/Antigravity.app/Contents/MacOS/Antigravity";
+        return options.serviceDown ? main : main + "\n4242 /Applications/Antigravity.app/Contents/Resources/bin/language_server";
       }
+      if (cmd === "open") return "";
       throw new Error(`Unexpected command blocked: ${cmd}`);
     },
     spawn() { throw new Error("Unexpected spawn blocked"); }

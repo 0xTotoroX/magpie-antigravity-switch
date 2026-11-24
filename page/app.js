@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 本机页面服务的账号快照、i18n.js 文案与 Magpie 页面桥接。
- * [OUTPUT]: Gemini 与 GPT / Claude 共享额度、套餐简称、登录状态和账号操作区的原位反馈。
+ * [OUTPUT]: Gemini 与 GPT / Claude 共享额度、套餐简称、已保存的桌面登录、CLI 状态和账号操作区的原位反馈。
  * [POS]: 经典脚本页面渲染器；不持有 OAuth 凭据。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
  */
@@ -46,8 +46,6 @@
     let label;
     if (cmd.type === "refresh") {
       label = result.ok === false ? "refreshFailed" : warning ? "partialFailure" : "refreshed";
-    } else if (cmd.type === "reload-desktop") {
-      label = warning ? "reloadFailed" : "reloading";
     } else if (cmd.type === "switch") {
       label = result.ok === false ? "switchFailed" : warning ? "desktopWarning" : cmd.target === "cli" ? "cliSaved" : "saved";
     }
@@ -193,15 +191,18 @@
     return { label: summaries.join(" · "), detail: details.join("\n\n") };
   }
 
+  function desktopNeedsConfirmation(current) {
+    return current?.desktopRunning === true || current?.desktopStatus === "unknown";
+  }
+
   function showsDesktopCheck(account) {
     return account.isEligible && account.savedDesktop && account.activeCli &&
-      currentState?.current?.desktopStatus === "unknown";
+      desktopNeedsConfirmation(currentState?.current);
   }
 
   function renderActions(account) {
     const email = escapeHtml(account.email);
     const locked = pendingCommand || currentState?.error ? "disabled" : "";
-    const pending = account.pendingDesktop && currentState?.current?.desktopStatus !== "unknown";
     const canSwitch = account.hasCredentials && account.isEligible;
     const busy = pendingCommand?.email === account.email && pendingCommand;
     const result = feedback?.cmd.email === account.email && feedback;
@@ -210,33 +211,21 @@
     const clock = '<span class="action-icon icon-clock" aria-hidden="true"></span>';
 
     if (busy) {
-      const label = busy.type === "reload-desktop" ? t(pending ? "applying" : "reloading") : t("switching");
-      return `<span class="action-feedback is-busy"${origin} aria-busy="true"><span class="action-icon icon-spinner" aria-hidden="true"></span><span>${label}</span></span>`;
+      return `<span class="action-feedback is-busy"${origin} aria-busy="true"><span class="action-icon icon-spinner" aria-hidden="true"></span><span>${t("switching")}</span></span>`;
     }
     if (result?.warning) {
       return `<button type="button" class="btn action-feedback feedback-warning"${origin} data-action="feedback-detail"
         title="${escapeHtml(i18n.backend(result.detail))}"><span class="action-icon icon-info" aria-hidden="true">i</span><span>${escapeHtml(feedbackLabel())}</span></button>`;
     }
-    // When the command leaves Desktop pending, offer the next action immediately.
-    if (result && !(pending && result.status === "桌面端待生效" && canSwitch)) {
-      const waiting = result.cmd.type === "reload-desktop" ||
-        ["桌面端重载中", "桌面端待生效", "打开桌面端后生效", "桌面端账号待确认"].includes(result.status);
+    if (result) {
+      const waiting = ["桌面端重载中", "打开桌面端后生效", "桌面端账号待确认"].includes(result.status);
       const icon = waiting ? clock : '<span class="action-icon icon-check" aria-hidden="true"></span>';
       const label = result.status === "打开桌面端后生效" ? t("onLaunch") : feedbackLabel();
       return `<span class="action-feedback ${waiting ? "is-waiting" : "is-done"}"${origin}
         title="${escapeHtml(i18n.backend(result.detail))}">${icon}<span>${escapeHtml(label)}</span></span>`;
     }
     if (showsDesktopCheck(account)) return `<span class="action-feedback is-waiting" role="status">${t("desktopUnknown")}</span>`;
-    if (!canSwitch) return pending ? `<span class="action-feedback is-waiting">${clock}${t("desktopPending")}</span>` : "";
-
-    if (pending) {
-      const hint = `${t("activateDesktop")} · ${t("desktopPending")}`;
-      return `<button type="button" class="btn btn-ghost action-apply" data-action="reload-desktop" data-email="${email}"
-        aria-label="${hint}" title="${hint}" ${locked}>${clock}${t("activateDesktop")}</button>`;
-    }
-    if (account.activeDesktop && account.activeCli && account.savedDesktop) {
-      return `<button type="button" class="btn btn-ghost" data-action="reload-desktop" data-email="${email}" ${locked}>${t("refreshDesktop")}</button>`;
-    }
+    if (!canSwitch) return "";
     return `<button type="button" class="btn btn-primary" data-action="switch-all" data-email="${email}" ${locked}>${t("switch")}</button>
       <button type="button" class="btn btn-cli" data-action="switch-cli" data-email="${email}"
         title="${t(currentState?.current?.cliUsesSharedLogin ? "cliShared" : "cliNext")}" ${locked}>${t("cliOnly")}</button>`;
@@ -245,7 +234,7 @@
   function renderAccountRow(account, quotaGroups = QUOTA_GROUPS) {
     const desktopSavedOffline = account.savedDesktop && currentState?.current?.desktopStatus === "stopped";
     const statusTags = [
-      account.activeDesktop ? t("desktop") : desktopSavedOffline ? t("desktopSaved") : null,
+      desktopSavedOffline ? t("desktopSaved") : null,
       account.activeMagpieFirst ? t("magpiePreferred") : null
     ].filter(Boolean).map((label) => `<span class="tag tag-active">${label}</span>`).join("");
 
@@ -318,7 +307,7 @@
     const desktopNotice = document.getElementById("desktopNotice");
     const allAccounts = Array.isArray(state?.accounts) ? state.accounts : [];
     const visibleAccounts = allAccounts.filter((account) => account.isEligible);
-    desktopNotice?.classList.toggle("hidden", Boolean(state?.error) || cur.desktopStatus !== "unknown" || visibleAccounts.some(showsDesktopCheck));
+    desktopNotice?.classList.toggle("hidden", Boolean(state?.error) || !desktopNeedsConfirmation(cur) || visibleAccounts.some(showsDesktopCheck));
     const quotaGroups = visibleQuotaGroups(visibleAccounts);
     toolbarIssue = sharedQuotaIssue(visibleAccounts, quotaGroups);
     if (refreshResult?.warning) {
@@ -335,7 +324,7 @@
       : "";
     issueButton.title = toolbarIssue?.detail || "";
     issueButton.setAttribute("aria-label", issueButton.title);
-    const status = pendingCommand?.email ? t(pendingCommand.type === "reload-desktop" ? "reloading" : "switching")
+    const status = pendingCommand?.email ? t("switching")
       : refreshing ? t("refreshing") : feedback?.label ? feedbackLabel() : "";
     const announcement = [pendingCommand?.email || feedback?.cmd.email, status].filter(Boolean).join(" · ");
     const live = document.getElementById("operationStatus");
@@ -493,10 +482,6 @@
         target: "cli",
         reloadDesktop: false,
         syncMagpie: true
-      });
-    } else if (action === "reload-desktop") {
-      sendPluginCommand({
-        type: "reload-desktop", email
       });
     }
   });

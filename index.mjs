@@ -38,8 +38,10 @@ function printStatus() {
   if (state.error) throw new Error(state.error);
   const daemonInfo = ensureBackgroundWatcher();
   console.log("=== Antigravity 账号状态 ===");
-  console.log(`桌面端 (Antigravity.app): ${state.current.desktopEmail || (state.current.desktopRunning ? "账号待确认" : "未登录")}${state.current.desktopRunning ? " [运行中]" : " [未运行]"}`);
-  if (state.current.desktopPending) console.log(`桌面端待生效           : ${state.current.desktopSavedEmail}`);
+  const { desktopRunning, desktopSavedEmail } = state.current;
+  const desktopStatus = desktopRunning === null ? "运行状态未知" : desktopRunning ? "运行中，账号待确认" : "未运行";
+  console.log(`桌面端 (Antigravity.app): ${desktopStatus}`);
+  if (desktopSavedEmail) console.log(`桌面端已保存           : ${desktopSavedEmail}`);
   console.log(`CLI (agy)               : ${state.current.cliEmail || "未登录"}`);
   console.log(`Magpie 网关首选         : ${state.current.magpieFirstEmail || "未设置"}`);
   console.log(`推荐充裕账号            : ${state.recommendedEmail || "无"}`);
@@ -50,7 +52,7 @@ function printStatus() {
   for (const acc of state.accounts) {
     const badges = [
       acc.tierLabel,
-      acc.activeDesktop ? "桌面端" : null,
+      acc.savedDesktop ? "桌面端已保存" : null,
       acc.activeCli ? "CLI" : null,
       acc.activeMagpieFirst ? "Magpie首选" : null
     ]

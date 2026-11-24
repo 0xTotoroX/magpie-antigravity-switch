@@ -2,7 +2,7 @@
 
 > L2 | 父级：[项目地图](../AGENTS.md)
 
-- `core.mjs`：兼容 `plugin:agy-cli`（主源）、`plugin:antigravity`、legacy `antigravity`、`plugin-auth.json` 与 `agyHome` 隔离令牌；通过 Magpie 的 `quota refresh agy-cli … --json` 分两路按账号读取原始套餐与额度并写入 `antigravity-switch-cli-cache.json`；手动查询超时的账号在宿主冷却后逐个补查一次，结合 Magpie 配额缓存完成会员分类、本地运行身份、严格配置读取、保留已有授权的钥匙串更新与失败恢复、带摘要清单的备份和账号命令。旧本地套餐及额度快照保留但不参与状态聚合。
+- `core.mjs`：兼容 `plugin:agy-cli`（主源）、`plugin:antigravity`、legacy `antigravity`、`plugin-auth.json` 与 `agyHome` 隔离令牌；通过 Magpie 的 `quota refresh agy-cli … --json` 分两路按账号读取原始套餐与额度并写入 `antigravity-switch-cli-cache.json`；手动查询超时的账号在宿主冷却后逐个补查一次，结合 Magpie 配额缓存完成会员分类、桌面主程序运行状态与已保存的登录、严格配置读取、保留已有授权的钥匙串更新与失败恢复、带摘要清单的备份和账号命令。旧本地套餐及额度快照保留但不参与状态聚合。
 - `page-service.mjs`：仅监听回环地址；静态界面使用资源白名单，状态读取与命令均需本次后台签发的凭证。
 - `daemon.mjs`：独立包与社区包的指令解析、兼容旧版设置指令；页面服务与后台同步共用串行异步队列（含 `refresh`）、去重、文件监听（含 `plugin-auth.json` 与 `cli-cache`）、周期同步/后台按 TTL 刷新和源码签名热重载。macOS 内核文件锁保证单实例，PID 记录仅供诊断。完成队列中的命令后再重载，安装目录改变时交接给当前 Magpie 页面。状态读写失败不得造成后续同步永久停止。
 

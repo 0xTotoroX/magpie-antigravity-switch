@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { fixture, auth, login, live, quota, future } from "./fixture.mjs";
+import { fixture, auth, login, quota, future } from "./fixture.mjs";
 
 test("#1 new Keychain item has restricted ACL and never deletes", async () => {
   const f = await fixture({ desktopInstalled: true });
@@ -123,7 +123,7 @@ test("#4 file read failure does not mark the backup complete", async () => {
 
 test("CLI-only switch uses and confirms the shared Keychain for local agy 1.5", async () => {
   const old = "old@example.test", next = "next@example.test";
-  const f = await fixture({ agyVersion: "1.5.12", keychain: auth(old), liveStatus: live(old) });
+  const f = await fixture({ agyVersion: "1.5.12", keychain: auth(old), running: true });
   const p = f.core.PATHS;
   f.write(p.loginsJson, [login(old), login(next)]);
   f.write(p.cliToken, auth("legacy@example.test"));
@@ -135,8 +135,9 @@ test("CLI-only switch uses and confirms the shared Keychain for local agy 1.5", 
   assert.equal(f.keychain().id_token_email, next);
   assert.equal(result.state.current.cliEmail, next);
   assert.equal(result.state.current.cliUsesSharedLogin, true);
-  assert.equal(result.state.current.desktopRuntimeEmail, old);
-  assert.equal(result.pending, true);
+  assert.equal(result.state.current.desktopRuntimeEmail, null);
+  assert.equal(result.pending, false);
+  assert.equal(result.desktopUnverified, true);
   assert.equal(result.reloadResult, null);
   assert.equal(f.read(p.appStorage)["jetski.onboarding.lastLoginUsername"], old);
   assert.equal(f.read(p.cliToken).id_token_email, "legacy@example.test");
@@ -169,21 +170,25 @@ test("CLI-only switch leaves preferences alone if the Keychain does not confirm 
   assert.equal(f.core.getFullState().current.cliEmail, old);
 });
 
-test("#5 cooldown keeps running identity distinct from pending credentials", async () => {
+test("#5 reload cooldown preserves the new saved login without assuming the desktop changed", async () => {
   const old = "old@example.test", next = "next@example.test";
-  const f = await fixture({ keychain: auth(old), liveStatus: live(old) });
+  const f = await fixture({ keychain: auth(old), running: true });
   f.write(f.core.PATHS.loginsJson, [login(old), login(next)]);
-  const stamp = new Date().toISOString().replace("T", " ").replace("Z", "");
+  const now = new Date();
+  // Electron writes local wall time with no UTC offset.
+  const stamp = new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, -1).replace("T", " ");
   f.fs.writeFileSync(f.core.PATHS.mainLog, `[${stamp}] Attempting restart 2/3\n`);
   const result = f.core.switchAccount({ email: next, target: "desktop", reloadDesktop: true, syncMagpie: false });
   assert.equal(result.reloadResult.reloaded, false);
-  assert.equal(result.pending, true);
-  assert.match(result.message, /待生效/);
-  assert.equal(result.state.current.desktopEmail, old);
+  assert.equal(result.pending, false);
+  assert.equal(result.desktopUnverified, true);
+  assert.match(result.reloadResult.reason, /黑屏保护/);
+  assert.match(result.message, /桌面端账号待确认/);
+  assert.equal(result.state.current.desktopEmail, null);
   assert.equal(result.state.current.desktopSavedEmail, next);
   assert.equal(result.state.current.desktopConsistent, false);
-  assert.equal(result.state.accounts.find(a => a.email === next).pendingDesktop, true);
-  f.options.liveStatus = live(next);
+  assert.equal(result.state.accounts.find(a => a.email === next).pendingDesktop, false);
+  f.options.running = false;
   const after = f.core.getFullState();
   assert.equal(after.current.desktopPending, false);
   assert.equal(after.current.desktopConsistent, true);
@@ -227,8 +232,8 @@ test("#6 recommendations use the most restrictive window in each pool", async ()
   assert.equal(state.recommendedEmail, usable);
   assert.equal(state.accounts.find(a => a.email === exhausted).score, 46.4);
 });
-test("#7 Magpie is authoritative even when the current desktop reports a different quota", async () => {
-  const email = "live@example.test", f = await fixture({ keychain: auth(email), liveStatus: live(email, 0) });
+test("#7 Magpie supplies quotas while the desktop is open", async () => {
+  const email = "live@example.test", f = await fixture({ keychain: auth(email), running: true });
   f.write(f.core.PATHS.quotasJson, { [`antigravity/${email}`]: quota(100, 20, 1) });
   const pools = f.core.getFullState().accounts[0].quota.pools;
   assert.equal(pools.find(p => p.window === "5 hours" && p.pool === "Claude & GPT").remaining, 100);
@@ -241,19 +246,40 @@ test("#7 saved local quota is ignored even when it is newer than Magpie", async 
   f.write(f.core.PATHS.quotasJson, { [`antigravity/${email}`]: quota(25, 50) });
   assert.equal(f.core.getFullState().accounts[0].quota.pools.find(p => p.window === "5 hours").remaining, 25);
 });
-test("#7 local status identifies the running account without capturing quota or tier", async () => {
-  const email = "same@example.test", f = await fixture({ keychain: auth(email), liveStatus: live(email, 50) });
-  const captured = f.core.captureLiveClientAccounts();
-  assert.deepEqual(JSON.parse(JSON.stringify(captured.liveLs)), { email });
-  const state = f.core.getFullState();
-  assert.equal(state.current.desktopRuntimeEmail, email);
+test("#7 a full sync reads executable names once and makes no desktop network requests", async () => {
+  const email = "same@example.test";
+  const f = await fixture({ keychain: auth(email), running: true, serviceDown: true });
+  const state = f.core.syncStateFile({ fullResult: true });
+  assert.equal(state.current.desktopRunning, true);
+  assert.equal(state.current.desktopStatus, "unknown");
+  assert.equal(state.current.desktopRuntimeEmail, null);
+  assert.equal(state.current.desktopSavedEmail, email);
   assert.equal(state.accounts[0].quota, null);
   assert.equal(state.accounts[0].plan, null);
   assert.equal(f.read(f.core.PATHS.vaultJson).accounts[email].liveQuota, undefined);
+  const probes = f.calls.filter(({ cmd }) => ["ps", "lsof", "curl"].includes(cmd));
+  assert.deepEqual(JSON.parse(JSON.stringify(probes)), [{ cmd: "ps", args: ["-axww", "-o", "pid=,comm="] }]);
+});
+
+test("an unreadable process list keeps the desktop status unknown and the saved login available", async () => {
+  const f = await fixture({ keychain: auth("saved@example.test"), denyProcessRead: true });
+  const state = f.core.getFullState();
+  assert.equal(state.current.desktopRunning, null);
+  assert.equal(state.current.desktopStatus, "unknown");
+  assert.equal(state.current.desktopEmail, null);
+  assert.equal(state.current.desktopSavedEmail, "saved@example.test");
+});
+
+test("reload waits for a starting desktop service without interrupting the app", async () => {
+  const f = await fixture({ running: true, serviceDown: true });
+  const result = f.core.reloadDesktopLanguageServer();
+  assert.equal(result.reloaded, false);
+  assert.match(result.reason, /尚未就绪/);
+  assert(!f.calls.some(({ cmd }) => ["kill", "open", "lsof", "curl"].includes(cmd)));
 });
 
 test("#7 old local-only readings remain preserved but cannot classify or auto-import an account", async () => {
-  const email = "legacy@example.test", f = await fixture({ keychain: auth(email), liveStatus: live(email, 100) });
+  const email = "legacy@example.test", f = await fixture({ keychain: auth(email), running: true });
   const legacyQuota = { updatedAt: Date.now(), plan: "Google AI Ultra (20x)", pools: [{ pool: "Claude & GPT", window: "7 days", remaining: 100 }] };
   f.write(f.core.PATHS.vaultJson, { accounts: { [email]: { plan: "Google AI Ultra (20x)", liveQuota: legacyQuota } } });
   const account = f.core.getFullState().accounts[0];
@@ -284,7 +310,7 @@ test("#7 the four shared windows keep their order and ignore legacy Argon", asyn
 });
 
 test("#7 missing, invalid and failed Magpie reads never fall back to local allowances", async () => {
-  const email = "missing@example.test", f = await fixture({ keychain: auth(email), liveStatus: live(email, 100) });
+  const email = "missing@example.test", f = await fixture({ keychain: auth(email), running: true });
   const entry = quota(80, 60);
   entry.quota.windows = entry.quota.windows.slice(0, 2);
   entry.quota.windows[0].used = null;
@@ -330,8 +356,9 @@ test("#8 unknown local plan remains unknown and organize does not auto-import it
   assert.equal(f.read(f.core.PATHS.loginsJson)[0].plan, undefined);
 });
 for (const plan of [null, "Starter", "Google AI Pro"]) {
-  test(`#8 local plan ${plan} does not classify an account without Magpie tier data`, async () => {
-    const email = "tier@example.test", f = await fixture({ keychain: auth(email), liveStatus: live(email, 50, plan) });
+  test(`#8 a legacy vault plan of ${plan} does not classify an account without Magpie tier data`, async () => {
+    const email = "tier@example.test", f = await fixture({ keychain: auth(email), running: true });
+    f.write(f.core.PATHS.vaultJson, { accounts: { [email]: { plan } } });
     const state = f.core.getFullState();
     assert.equal(state.accounts[0].isPro, false);
     assert.equal(state.accounts[0].plan, null);
@@ -354,7 +381,7 @@ for (const [plan, family, paid, free] of [
 ]) {
   test(`membership preserves the observed name and eligibility for ${plan}`, async () => {
     const email = "membership@example.test";
-    const f = await fixture({ keychain: auth(email), liveStatus: live(email, 50, plan) });
+    const f = await fixture({ keychain: auth(email), running: true });
     const entry = quota(50, 50);
     entry.quota.plan = plan;
     f.write(f.core.PATHS.quotasJson, { [`antigravity/${email}`]: entry });
@@ -377,7 +404,7 @@ for (const [plan, family, paid, free] of [
 }
 
 test("an Ultra plan without a multiplier never invents 5x or 20x", async () => {
-  const f = await fixture({ keychain: auth("ultra@example.test"), liveStatus: live("ultra@example.test", 100, "Google AI Ultra") });
+  const f = await fixture({ keychain: auth("ultra@example.test"), running: true });
   const entry = quota(100, 100);
   entry.quota.plan = "Google AI Ultra";
   f.write(f.core.PATHS.quotasJson, { "antigravity/ultra@example.test": entry });
@@ -902,7 +929,7 @@ test("a fresh command can finish after waiting in the daemon queue", async () =>
 
 test("an old DevTools file and a lookalike process cannot trigger a desktop restart", async () => {
   const f = await fixture({ fakeProcessList:
-    "4242 /bin/sh -c /Applications/Antigravity.app/Contents/Resources/bin/language_server --csrf_token abc-def"
+    "4242 /bin/sh -c /Applications/Antigravity.app/Contents/Resources/bin/language_server"
   });
   f.fs.writeFileSync(f.core.PATHS.devToolsActivePort, "46800\n");
   f.fs.writeFileSync(f.core.PATHS.mainLog, "Language server crashed 3 times in a row. Giving up.\n");

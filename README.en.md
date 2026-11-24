@@ -35,7 +35,7 @@ You can refresh quotas or switch an existing account while another Magpie sign-i
 
 The table shows the 5-hour and weekly quotas for Gemini on the left and GPT / Claude on the right. Narrow views use circular meters and short reset times. Gemini 4 Carbon appears when a valid separate reading is reported. Missing readings show a dash and expired readings show **Needs refresh**. Common plans use short labels such as Pro and Starter. The plan comes from agy-cli. If the provider omits it, the plugin looks up the saved Antigravity sign-in for the same email. You can view these records without switching accounts.
 
-On macOS with local agy 1.5 or later, **CLI only** updates the Keychain sign-in used by new CLI processes and shared with the desktop app. Reconnect an existing CodexHost session to use the new CLI sign-in. A pending desktop change is marked until the running account can be verified.
+On macOS with local agy 1.5 or later, **CLI only** updates the Keychain sign-in used by new CLI processes and shared with the desktop app. Reconnect an existing CodexHost session to use the new CLI sign-in. Switch shows the saved desktop sign-in. While the desktop app is open, its session is marked “Desktop unverified”.
 
 Sign-ins and backups stay on this Mac. Existing Keychain access permissions are preserved. macOS may ask you to authorize access.
 

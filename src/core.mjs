@@ -1,5 +1,5 @@
 /**
- * [INPUT]: Magpie logins/plugin-auth/配额 JSON、隔离 agyHome 令牌、macOS security 与 language_server 登录身份。
+ * [INPUT]: Magpie logins/plugin-auth/配额 JSON、隔离 agyHome 令牌、macOS 钥匙串与桌面进程运行状态。
  * [OUTPUT]: Magpie 套餐及登录记录兜底标记、配额窗口及读数时间、会员分类、登录状态、校验备份、账号操作与无凭据的 page/.runtime/state.js。
  * [POS]: CLI 与守护进程共用核心；状态脚本供 page/app.js 渲染，运行身份与待生效凭据分别返回。
  * [PROTOCOL]: 变更时更新此头部，然后检查 AGENTS.md
@@ -436,85 +436,15 @@ function isBackupComplete(backupDir) {
   });
 }
 
-function findAppProcess(executable, column = "comm") {
-  const processes = execFileSync("ps", ["-axww", "-o", `pid=,${column}=`], {
+function findAppPid(executable) {
+  const processes = execFileSync("ps", ["-axww", "-o", "pid=,comm="], {
     encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000
   });
   for (const line of processes.split("\n")) {
     const match = /^\s*(\d+)\s+(.+)$/.exec(line);
-    if (!match) continue;
-    const command = match[2].trim();
-    if (command === executable || (column === "args" && command.startsWith(`${executable} `))) {
-      return { pid: Number(match[1]), command };
-    }
+    if (match && match[2].trim() === executable) return Number(match[1]);
   }
   return null;
-}
-
-function getRunningLanguageServerInfo() {
-  try {
-    const ls = findAppProcess(LANGUAGE_SERVER_PATTERN, "args");
-    if (!ls) return null;
-    const { pid, command } = ls;
-    const csrf = /(?:^|\s)--csrf_token(?:=|\s+)([a-f0-9-]+)/i.exec(command)?.[1] || null;
-
-    let port = null;
-    try {
-      const lsofOut = execFileSync(
-        "lsof",
-        ["-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", String(pid)],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000 }
-      );
-      const portMatch = /:(\d+)\s+\(LISTEN\)/.exec(lsofOut);
-      if (portMatch) {
-        port = Number(portMatch[1]);
-      }
-    } catch {
-      // ignore
-    }
-    return { pid: Number(pid), csrf, port };
-  } catch {
-    return null;
-  }
-}
-
-function queryLiveLanguageServerIdentity() {
-  const lsInfo = getRunningLanguageServerInfo();
-  if (!lsInfo || !lsInfo.port || !lsInfo.csrf) return null;
-
-  try {
-    const out = execFileSync(
-      "curl",
-      [
-        "--noproxy",
-        "127.0.0.1,localhost",
-        "-ks",
-        "--max-time",
-        "2",
-        "-X",
-        "POST",
-        `https://127.0.0.1:${lsInfo.port}/exa.language_server_pb.LanguageServerService/GetUserStatus`,
-        "-H",
-        "Content-Type: application/json",
-        "-H",
-        "Connect-Protocol-Version: 1",
-        "-H",
-        `x-codeium-csrf-token: ${lsInfo.csrf}`,
-        "-d",
-        "{}"
-      ],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
-    );
-    const parsed = JSON.parse(out);
-    const status = parsed?.userStatus;
-    const email = status?.email?.trim?.();
-    if (!email) return null;
-
-    // 本地接口只确认运行身份；套餐与窗口额度统一由 Magpie 提供。
-    return { email };
-  } catch {
-    return null;
-  }
 }
 
 function extractPluginCredential(entry) {
@@ -698,12 +628,10 @@ export function captureLiveClientAccounts() {
     }
   }
 
-  const liveLs = queryLiveLanguageServerIdentity();
-
   if (changed) {
     saveVault(vault);
   }
-  return { vault, keychainPayload, cliPayload, standalonePayload, pluginAuth, pluginCredentials, liveLs };
+  return { vault, keychainPayload, cliPayload, standalonePayload, pluginAuth, pluginCredentials };
 }
 
 function quotaWindowMatches(window, spec) {
@@ -940,8 +868,12 @@ function computeRecommendationScore(account) {
   return Math.round((base + memberBonus) * 10) / 10;
 }
 
-function isLanguageServerRunning() {
-  return Boolean(getRunningLanguageServerInfo());
+function isDesktopRunning() {
+  try {
+    return findAppPid(DESKTOP_EXECUTABLE) !== null;
+  } catch {
+    return null;
+  }
 }
 
 function inspectElectronRestartState() {
@@ -1040,6 +972,7 @@ function usesSharedAgyKeychain(options) {
 function readStateInputs() {
   return {
     ...captureLiveClientAccounts(),
+    desktopRunning: isDesktopRunning(),
     logins: readLogins(),
     cliCache: readCliQuotaCache(),
     quotas: readJsonSafe(PATHS.quotasJson, {}),
@@ -1052,17 +985,13 @@ export function getFullState() {
 }
 
 function buildState(inputs, agyCliOnly = false) {
-  const { vault, keychainPayload, cliPayload, pluginAuth, pluginCredentials, liveLs,
+  const { vault, keychainPayload, cliPayload, pluginAuth, pluginCredentials, desktopRunning,
     logins, cliCache, quotas, appStorage } = inputs;
 
   const desktopKeychainEmail = keychainPayload?.id_token_email || null;
   const desktopUiEmail = appStorage?.["jetski.onboarding.lastLoginUsername"] || null;
   const desktopSavedEmail = desktopKeychainEmail || desktopUiEmail || null;
-  const lsRunning = Boolean(liveLs) || isLanguageServerRunning();
-  const desktopRuntimeEmail = lsRunning ? liveLs?.email || null : null;
-  const desktopEmail = lsRunning ? desktopRuntimeEmail : desktopSavedEmail;
-  const desktopPending = Boolean(desktopSavedEmail && desktopRuntimeEmail && desktopRuntimeEmail !== desktopSavedEmail);
-  const desktopStatus = !lsRunning ? "stopped" : !desktopRuntimeEmail ? "unknown" : desktopPending ? "pending" : "running";
+  const desktopStopped = desktopRunning === false;
   const cliUsesSharedLogin = usesSharedAgyKeychain();
   const cliEmail = (cliUsesSharedLogin ? desktopKeychainEmail : cliPayload?.id_token_email) || null;
 
@@ -1084,7 +1013,6 @@ function buildState(inputs, agyCliOnly = false) {
     for (const email of Object.keys(vault.accounts || {})) {
       allEmails.add(email);
     }
-    if (desktopEmail) allEmails.add(desktopEmail);
     if (desktopSavedEmail) allEmails.add(desktopSavedEmail);
     if (cliEmail) allEmails.add(cliEmail);
   }
@@ -1182,9 +1110,9 @@ function buildState(inputs, agyCliOnly = false) {
       hasCredentials,
       magpieOn: matchingLogins.some((item) => Boolean(item.on)),
       magpieFirst: matchingLogins.some((item) => Boolean(item.first)),
-      activeDesktop: lsRunning && desktopRuntimeEmail === email,
+      activeDesktop: false,
       savedDesktop: desktopSavedEmail === email,
-      pendingDesktop: desktopPending && desktopSavedEmail === email,
+      pendingDesktop: false,
       activeDesktopKeychain: desktopKeychainEmail === email,
       activeDesktopUi: desktopUiEmail === email,
       activeCli: cliEmail === email,
@@ -1205,7 +1133,6 @@ function buildState(inputs, agyCliOnly = false) {
   accounts.sort((a, b) => {
     if (a.isPaid !== b.isPaid) return a.isPaid ? -1 : 1;
     if (a.isEligible !== b.isEligible) return a.isEligible ? -1 : 1;
-    if (a.activeDesktop !== b.activeDesktop) return a.activeDesktop ? -1 : 1;
     if (a.activeCli !== b.activeCli) return a.activeCli ? -1 : 1;
     return b.score - a.score;
   });
@@ -1238,19 +1165,19 @@ function buildState(inputs, agyCliOnly = false) {
       ineligible: accounts.filter((a) => !a.isEligible).length
     },
     current: {
-      desktopEmail,
-      desktopRuntimeEmail,
+      // Keep snapshot fields compatible. A saved login cannot identify an open desktop session.
+      desktopEmail: desktopStopped ? desktopSavedEmail : null,
+      desktopRuntimeEmail: null,
       desktopSavedEmail,
-      desktopPending,
-      desktopStatus,
+      desktopPending: false,
+      desktopStatus: desktopStopped ? "stopped" : "unknown",
       desktopKeychainEmail,
       desktopUiEmail,
-      desktopConsistent: (!desktopKeychainEmail || !desktopUiEmail || desktopKeychainEmail === desktopUiEmail) &&
-        (!lsRunning || Boolean(desktopRuntimeEmail && desktopRuntimeEmail === desktopSavedEmail)),
+      desktopConsistent: desktopStopped && (!desktopKeychainEmail || !desktopUiEmail || desktopKeychainEmail === desktopUiEmail),
       cliEmail,
       cliUsesSharedLogin,
       magpieFirstEmail,
-      desktopRunning: lsRunning
+      desktopRunning
     },
     recommendedEmail: recommended?.email || null,
     backupPath: vault.initialBackupPath || null,
@@ -1775,30 +1702,23 @@ function spawnDesktopRecoveryWatcher(oldPid, savedRoute = "/") {
 
 export function reloadDesktopLanguageServer(targetEmail = "", language) {
   const lsState = inspectElectronRestartState();
-  const lsInfo = getRunningLanguageServerInfo();
-
-  // Only recover a running desktop app that recorded a language-server crash.
-  if (!lsInfo && lsState.gaveUp) {
-    try {
-      const desktop = findAppProcess(DESKTOP_EXECUTABLE);
-      if (desktop) {
-        execFileSync("kill", ["-TERM", String(desktop.pid)], { stdio: ["ignore", "ignore", "ignore"] });
-        execFileSync("open", ["-a", DESKTOP_APP], { stdio: ["ignore", "ignore", "ignore"] });
-        return {
-          reloaded: true,
-          reason: "检测到桌面端服务曾停止响应，已自动重启 Antigravity 恢复界面"
-        };
+  let servicePid;
+  try {
+    servicePid = findAppPid(LANGUAGE_SERVER_PATTERN);
+    if (servicePid === null) {
+      const desktopPid = findAppPid(DESKTOP_EXECUTABLE);
+      if (desktopPid === null) {
+        return { reloaded: false, reason: "桌面端当前未运行，凭证已就绪，打开即生效" };
       }
-    } catch (err) {
-      return { reloaded: false, reason: `桌面端重载失败: ${sanitizeErrorMessage(err)}` };
+      if (!lsState.gaveUp) {
+        return { reloaded: false, reason: "桌面端服务尚未就绪，请稍后重试" };
+      }
+      execFileSync("kill", ["-TERM", String(desktopPid)], { stdio: ["ignore", "ignore", "ignore"] });
+      execFileSync("open", ["-a", DESKTOP_APP], { stdio: ["ignore", "ignore", "ignore"] });
+      return { reloaded: true, reason: "检测到桌面端服务曾停止响应，已自动重启 Antigravity 恢复界面" };
     }
-  }
-
-  if (!lsInfo) {
-    return {
-      reloaded: false,
-      reason: "桌面端当前未运行，凭证已就绪，打开即生效"
-    };
+  } catch (err) {
+    return { reloaded: false, reason: `桌面端重载失败: ${sanitizeErrorMessage(err)}` };
   }
 
   // Case 2: Prevent hitting Electron's 3-restarts-in-60s permanent kill limit
@@ -1813,13 +1733,13 @@ export function reloadDesktopLanguageServer(targetEmail = "", language) {
 
   try {
     const savedRoute = injectSmoothTransitionOverlaySync(targetEmail, language);
-    if (findAppProcess(LANGUAGE_SERVER_PATTERN)?.pid !== lsInfo.pid) {
+    if (findAppPid(LANGUAGE_SERVER_PATTERN) !== servicePid) {
       throw new Error("桌面端服务进程已变化，请重试");
     }
-    execFileSync("kill", ["-TERM", String(lsInfo.pid)], {
+    execFileSync("kill", ["-TERM", String(servicePid)], {
       stdio: ["ignore", "ignore", "ignore"]
     });
-    spawnDesktopRecoveryWatcher(lsInfo.pid, savedRoute || "/");
+    spawnDesktopRecoveryWatcher(servicePid, savedRoute || "/");
 
     const vault = readVault();
     const now = Date.now();
@@ -2010,18 +1930,15 @@ export function switchAccount({
   saveVault(vault);
 
   const state = syncStateFile({ fullResult: true });
-  const runtimeEmail = state.current.desktopRuntimeEmail;
-  const pending = Boolean(writesKeychain && runtimeEmail && runtimeEmail !== email);
   const desktopUnverified = Boolean(writesKeychain && (state.error || state.current.desktopStatus === "unknown"));
-  const desktopNotice = pending ? "桌面端待生效" : desktopUnverified ? "桌面端账号待确认" : null;
   return {
     ok: true,
-    pending,
+    pending: false,
     desktopUnverified,
     email,
     target,
     reloadResult,
-    message: [summaryMsg, desktopNotice].filter(Boolean).join(" · "),
+    message: desktopUnverified ? `${summaryMsg} · 桌面端账号待确认` : summaryMsg,
     state
   };
 }
@@ -2250,8 +2167,8 @@ export async function executeCommandAsync(cmd, { receivedAt } = {}) {
   }
 }
 
-function switchPageFeedback({ target, email, pending, desktopUnverified, reloadResult }) {
-  let desktopStatus = pending ? "桌面端待生效" : desktopUnverified ? "桌面端账号待确认" : null;
+function switchPageFeedback({ target, email, desktopUnverified, reloadResult }) {
+  let desktopStatus = desktopUnverified ? "桌面端账号待确认" : null;
   if (target === "cli") {
     return { pageMessage: [`新启动的 CLI 将使用 ${email}`, desktopStatus].filter(Boolean).join(" · ") };
   }
